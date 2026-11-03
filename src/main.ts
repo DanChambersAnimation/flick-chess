@@ -1,6 +1,7 @@
 import './style.css'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 
 await RAPIER.init()
@@ -42,6 +43,36 @@ function makeShape(height: number, profile: number[][]) {
   return shape
 }
 
+// A knight is a round base plus a flat horse outline pushed out into 3D.
+// Each point is [forwards, height]. The horse faces forwards along +x.
+function makeKnightShape() {
+  const base = makeShape(1.1, [
+    [0, 0], [0.34, 0], [0.34, 0.1], [0.22, 0.22], [0, 0.22],
+  ]).toNonIndexed()
+
+  const outline = new THREE.Shape()
+  outline.moveTo(-0.24, 0.18)
+  outline.lineTo(0.22, 0.18)
+  outline.lineTo(0.14, 0.42)
+  outline.lineTo(0.16, 0.55)
+  outline.lineTo(0.38, 0.62)
+  outline.lineTo(0.42, 0.74)
+  outline.lineTo(0.3, 0.88)
+  outline.lineTo(0.14, 0.98)
+  outline.lineTo(0.1, 1.1)
+  outline.lineTo(0, 1.0)
+  outline.lineTo(-0.16, 0.9)
+  outline.lineTo(-0.28, 0.6)
+  outline.closePath()
+
+  const horse = new THREE.ExtrudeGeometry(outline, { depth: 0.3, bevelEnabled: false })
+  horse.translate(0, -0.55, -0.15)
+
+  const knight = mergeGeometries([base, horse])!
+  knight.rotateY(Math.PI / 2) // Face the blue side
+  return knight
+}
+
 const PIECE_TYPES = {
   pawn: {
     height: 0.92, radius: 0.3, density: 1, maxImpulse: 8, liftScale: 1,
@@ -59,10 +90,7 @@ const PIECE_TYPES = {
   },
   knight: {
     height: 1.1, radius: 0.32, density: 3, maxImpulse: 16, liftScale: 1,
-    shape: makeShape(1.1, [
-      [0, 0], [0.34, 0], [0.34, 0.1], [0.16, 0.3], [0.14, 0.65],
-      [0.26, 0.8], [0.2, 1.0], [0.08, 1.1], [0, 1.1],
-    ]),
+    shape: makeKnightShape(),
   },
   bishop: {
     height: 1.25, radius: 0.3, density: 3, maxImpulse: 16, liftScale: 1,
@@ -89,6 +117,9 @@ const PIECE_TYPES = {
 
 type PieceKind = keyof typeof PIECE_TYPES
 
+
+const blueKnightShape = PIECE_TYPES.knight.shape.clone().rotateY(Math.PI)
+
 const redPaint = new THREE.MeshStandardMaterial({ color: 0xd62828, flatShading: true })
 const bluePaint = new THREE.MeshStandardMaterial({ color: 0x1d3557, flatShading: true })
 
@@ -99,6 +130,54 @@ world.timestep = 1 / 120
 world.createCollider(
   RAPIER.ColliderDesc.cuboid(4, 0.1, 4).setTranslation(0, -0.1, 0)
 )
+
+// 4b-2. The table and the two players, solid in both worlds
+const tableTop = new THREE.Mesh(
+  new THREE.BoxGeometry(12, 0.4, 12),
+  new THREE.MeshStandardMaterial({ color: 0x8d5a3b })
+)
+tableTop.position.set(0, -0.4, 0)
+scene.add(tableTop)
+
+world.createCollider(
+  RAPIER.ColliderDesc.cuboid(6, 0.2, 6).setTranslation(0, -0.4, 0)
+)
+
+const skinPaint = new THREE.MeshStandardMaterial({ color: 0xf2c9a0, flatShading: true })
+
+function addPerson(z: number, paint: THREE.Material) {
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 1), paint)
+  torso.position.set(0, -0.5, z)
+  scene.add(torso)
+
+  const face = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9, 1), skinPaint)
+  face.position.set(0, 1.9, z)
+  scene.add(face)
+
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(1, 1.5, 0.5).setTranslation(0, -0.5, z)
+  )
+  world.createCollider(
+    RAPIER.ColliderDesc.ball(0.9).setTranslation(0, 1.9, z)
+  )
+}
+
+addPerson(7.2, redPaint)
+addPerson(-7.2, bluePaint)
+
+// 4b-3. Invisible side walls that only bishops can hit
+const WALL_GROUP = 0x00040002
+const BISHOP_GROUP = 0x0003ffff
+const OTHER_PIECE_GROUP = 0x0001ffff
+
+for (const x of [-4.1, 4.1]) {
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(0.1, 4, 4)
+      .setTranslation(x, 4, 0)
+      .setRestitution(1)
+      .setCollisionGroups(WALL_GROUP)
+  )
+}
 
 // 4c. Every piece is a visible mesh, an invisible body and a home square
 type Side = 'red' | 'blue'
@@ -120,7 +199,8 @@ function addPiece(kind: PieceKind, x: number, z: number, side: Side) {
   const type = PIECE_TYPES[kind]
   const homeY = type.height / 2
 
-  const mesh = new THREE.Mesh(type.shape, side === 'red' ? redPaint : bluePaint)
+  const shape = kind === 'knight' && side === 'blue' ? blueKnightShape : type.shape
+  const mesh = new THREE.Mesh(shape, side === 'red' ? redPaint : bluePaint)
   scene.add(mesh)
 
   const body = world.createRigidBody(
@@ -133,7 +213,8 @@ function addPiece(kind: PieceKind, x: number, z: number, side: Side) {
     RAPIER.ColliderDesc.cylinder(homeY, type.radius)
       .setDensity(type.density)
       .setFriction(0.5)
-      .setRestitution(0.3),
+      .setRestitution(kind === 'bishop' ? 0.8 : 0.3)
+      .setCollisionGroups(kind === 'bishop' ? BISHOP_GROUP : OTHER_PIECE_GROUP),
     body
   )
 
@@ -175,6 +256,15 @@ function hasPlayablePiece(side: Side) {
   return pieces.some((p) => p.side === side && isPlayable(p))
 }
 
+// Squared speeds, so 0.09 means 0.3 units a second
+function isSlow(piece: Piece) {
+  const v = piece.body.linvel()
+  const w = piece.body.angvel()
+  const speed = v.x * v.x + v.y * v.y + v.z * v.z
+  const spin = w.x * w.x + w.y * w.y + w.z * w.z
+  return speed < 0.09 && spin < 1
+}
+
 function canFlick(piece: Piece) {
   if (phase !== 'aiming' || piece.side !== turn) return false
   if (!isPlayable(piece)) return false
@@ -195,6 +285,12 @@ function startRolling() {
 }
 
 function endTurn() {
+  for (const piece of pieces) {
+    const position = piece.body.translation()
+    if (Math.abs(position.x) > 4 || Math.abs(position.z) > 4) piece.out = true
+    piece.body.setLinvel({ x: 0, y: 0, z: 0 }, false)
+    piece.body.setAngvel({ x: 0, y: 0, z: 0 }, false)
+  }
   const flicker = turn
   const other: Side = flicker === 'red' ? 'blue' : 'red'
 
@@ -214,7 +310,7 @@ function endTurn() {
 // Runs after every physics step, so every device agrees
 function afterStep() {
   for (const piece of pieces) {
-    if (!piece.out && piece.body.translation().y < -1) {
+    if (!piece.out && piece.body.translation().y < -3) {
       piece.out = true
       piece.mesh.visible = false
       piece.body.setEnabled(false)
@@ -224,8 +320,8 @@ function afterStep() {
   if (phase !== 'rolling') return
   rollingSteps++
 
-  const settled = pieces.every((p) => p.out || p.body.isSleeping())
-  if (settled || rollingSteps >= 1800) endTurn()
+  const settled = pieces.every((p) => p.out || isSlow(p))
+  if ((settled && rollingSteps > 30) || rollingSteps >= 1800) endTurn()
 }
 
 function resetGame() {
@@ -276,6 +372,12 @@ let aiming = false
 let selected: Piece | null = null
 const liftSlider = document.querySelector<HTMLInputElement>('#lift')!
 
+function getLift(kind: PieceKind) {
+  const slider = Number(liftSlider.value)
+  if (kind === 'knight') return Math.max(slider, 0.5)
+  return slider * PIECE_TYPES[kind].liftScale
+}
+
 function pointOnBoard(event: PointerEvent) {
   const box = renderer.domElement.getBoundingClientRect()
   pointer.x = ((event.clientX - box.left) / box.width) * 2 - 1
@@ -295,7 +397,7 @@ function updateArrow() {
   arrow.visible = length > 0.1
   arrow.position.set(x, 0.05, z)
 
-  const lift = Number(liftSlider.value) * PIECE_TYPES[selected.kind].liftScale
+  const lift = getLift(selected.kind)
   arrow.lookAt(x + shot.x, 0.05 + length * lift, z + shot.z)
 
   shaft.scale.z = length
@@ -353,7 +455,7 @@ window.addEventListener('pointerup', () => {
 
   const type = PIECE_TYPES[selected.kind]
   const strength = type.maxImpulse / MAX_PULL
-  const lift = Number(liftSlider.value) * type.liftScale
+  const lift = getLift(selected.kind)
 
   selected.body.applyImpulse(
     {
