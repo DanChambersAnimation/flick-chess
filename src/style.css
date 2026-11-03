@@ -9,3 +9,13 @@ canvas {display: block; }
   writing-mode: vertical-lr;
   direction: rtl;
 }
+#status {
+  position: fixed;
+  top: 16px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: white;
+  font: bold 20px sans-serif;
+  pointer-events: none;
+}
