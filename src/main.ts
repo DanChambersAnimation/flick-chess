@@ -239,20 +239,35 @@ for (const side of [-1, 1]) {
 
 // 4b-2c. A trophy shelf at each end. Fixed pattern, not randomness,
 // so every device builds exactly the same room.
+function addHandles(cup: THREE.BufferGeometry, x: number, y: number, size: number) {
+  const right = new THREE.TorusGeometry(size, 0.05, 4, 6, Math.PI).toNonIndexed()
+  right.rotateZ(-Math.PI / 2)
+  right.translate(x, y, 0)
+
+  const left = right.clone().rotateY(Math.PI)
+  return mergeGeometries([cup.toNonIndexed(), right, left])!
+}
+
 const TROPHY_TYPES = [
   {
     height: 1.4, radius: 0.4, color: 0xffc300,
-    shape: makeShape(1.4, [
-      [0, 0], [0.35, 0], [0.35, 0.12], [0.1, 0.2], [0.08, 0.6],
-      [0.4, 0.9], [0.42, 1.4], [0.3, 1.4], [0, 0.95],
-    ]),
+    shape: addHandles(
+      makeShape(1.4, [
+        [0, 0], [0.35, 0], [0.35, 0.12], [0.1, 0.2], [0.08, 0.6],
+        [0.4, 0.9], [0.42, 1.4], [0.3, 1.4], [0, 0.95],
+      ]),
+      0.38, 0.45, 0.2
+    ),
   },
   {
     height: 1, radius: 0.32, color: 0xcfd8dc,
-    shape: makeShape(1, [
-      [0, 0], [0.28, 0], [0.28, 0.1], [0.08, 0.2], [0.08, 0.5],
-      [0.32, 0.7], [0.2, 1], [0, 1],
-    ]),
+    shape: addHandles(
+      makeShape(1, [
+        [0, 0], [0.28, 0], [0.28, 0.1], [0.08, 0.2], [0.08, 0.5],
+        [0.32, 0.7], [0.2, 1], [0, 1],
+      ]),
+      0.3, 0.2, 0.18
+    ),
   },
 ]
 
