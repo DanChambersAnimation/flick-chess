@@ -10,17 +10,34 @@ await RAPIER.init()
 // 1. The three things every 3D program needs
 const scene = new THREE.Scene()
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100)
-camera.position.set(0, 9, 10)
+camera.position.set(0, 13, 10)
 
 const renderer = new THREE.WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 document.querySelector('#app')!.appendChild(renderer.domElement)
 
-// 2. Lights: a soft sky glow, plus one "sun" that shades the facets
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.5))
-const sun = new THREE.DirectionalLight(0xffffff, 2.5)
-sun.position.set(4, 10, 3)
-scene.add(sun)
+// 2. Lights: nearly dark, with one hard light over the table
+scene.background = new THREE.Color(0x0b0d14)
+scene.fog = new THREE.Fog(0x0b0d14, 25, 70)
+renderer.shadowMap.enabled = true
+
+scene.add(new THREE.HemisphereLight(0x8899bb, 0x1a1420, 0.4))
+
+const tableLight = new THREE.SpotLight(0xfff0d0, 900, 40, Math.PI / 5, 0.5, 2)
+tableLight.position.set(0, 15, 0)
+tableLight.castShadow = true
+tableLight.shadow.mapSize.set(1024, 1024)
+tableLight.shadow.camera.near = 5
+tableLight.shadow.camera.far = 40
+tableLight.shadow.normalBias = 0.03
+scene.add(tableLight)
+
+for (const [side, color] of [[1, 0xff4040], [-1, 0x4080ff]]) {
+  const endLight = new THREE.SpotLight(color, 300, 30, Math.PI / 4, 0.6, 2)
+  endLight.position.set(0, 12, side * 12)
+  endLight.target.position.set(0, 2, side * 19)
+  scene.add(endLight, endLight.target)
+}
 
 // 3. The board: 64 boxes sharing one shape
 const squareShape = new THREE.BoxGeometry(1, 0.2, 1)
@@ -133,11 +150,11 @@ world.createCollider(
   RAPIER.ColliderDesc.cuboid(4, 0.1, 4).setTranslation(0, -0.1, 0)
 )
 
-// 4b-2. The table and the two players, solid in both worlds
-const tableTop = new THREE.Mesh(
-  new THREE.BoxGeometry(12, 0.4, 12),
-  new THREE.MeshStandardMaterial({ color: 0x8d5a3b })
-)
+// 4b-2. The table, floor and two players, solid in both worlds
+const FLOOR_Y = -4
+
+const woodPaint = new THREE.MeshStandardMaterial({ color: 0x8d5a3b })
+const tableTop = new THREE.Mesh(new THREE.BoxGeometry(12, 0.4, 12), woodPaint)
 tableTop.position.set(0, -0.4, 0)
 scene.add(tableTop)
 
@@ -145,52 +162,100 @@ world.createCollider(
   RAPIER.ColliderDesc.cuboid(6, 0.2, 6).setTranslation(0, -0.4, 0)
 )
 
+for (const x of [-5.4, 5.4]) {
+  for (const z of [-5.4, 5.4]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.6, 3.4, 0.6), woodPaint)
+    leg.position.set(x, -2.3, z)
+    scene.add(leg)
+  }
+}
+
+const floor = new THREE.Mesh(
+  new THREE.BoxGeometry(100, 0.2, 100),
+  new THREE.MeshStandardMaterial({ color: 0x2b2d36 })
+)
+floor.position.set(0, FLOOR_Y - 0.1, 0)
+scene.add(floor)
+
+world.createCollider(
+  RAPIER.ColliderDesc.cuboid(50, 0.1, 50).setTranslation(0, FLOOR_Y - 0.1, 0)
+)
+
 const skinPaint = new THREE.MeshStandardMaterial({ color: 0xf2c9a0, flatShading: true })
 
-function addPerson(z: number, paint: THREE.Material) {
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 1), paint)
-  torso.position.set(0, -0.5, z)
+function addPerson(
+  x: number,
+  feetY: number,
+  z: number,
+  size: number,
+  paint: THREE.Material
+) {
+  const bodyY = feetY + 1.5 * size
+  const headY = feetY + 3.9 * size
+  const headSize = 0.9 * size
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(2 * size, 3 * size, size), paint)
+  torso.position.set(x, bodyY, z)
   scene.add(torso)
 
-  const face = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9, 1), skinPaint)
-  face.position.set(0, 1.9, z)
+  const face = new THREE.Mesh(new THREE.IcosahedronGeometry(headSize, 1), skinPaint)
+  face.position.set(x, headY, z)
   scene.add(face)
 
   world.createCollider(
-    RAPIER.ColliderDesc.cuboid(1, 1.5, 0.5).setTranslation(0, -0.5, z)
+    RAPIER.ColliderDesc.cuboid(size, 1.5 * size, size / 2).setTranslation(x, bodyY, z)
   )
   world.createCollider(
-    RAPIER.ColliderDesc.ball(0.9).setTranslation(0, 1.9, z)
+    RAPIER.ColliderDesc.ball(headSize).setTranslation(x, headY, z)
   )
 }
 
-addPerson(7.2, redPaint)
-addPerson(-7.2, bluePaint)
+addPerson(0, FLOOR_Y, 7.2, 2, redPaint)
+addPerson(0, FLOOR_Y, -7.2, 2, bluePaint)
 
-// 4b-2b. Shelves of breakable objects. These use a fixed pattern, not
-// randomness, so every device builds exactly the same room.
-const OBJECT_TYPES = [
+// 4b-2b. Spectators on a low stand behind each player
+const standPaint = new THREE.MeshStandardMaterial({ color: 0x3a3440 })
+const SHIRT_COLOURS = [0x2a9d8f, 0xe9c46a, 0xf4a261, 0x8ecae6, 0xb5838d]
+let spectatorCount = 0
+
+for (const side of [-1, 1]) {
+  const z = side * 12
+
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(32, 2, 3), standPaint)
+  stand.position.set(0, FLOOR_Y + 1, z)
+  scene.add(stand)
+
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(16, 1, 1.5).setTranslation(0, FLOOR_Y + 1, z)
+  )
+
+  for (let x = -12; x <= 12; x += 3) {
+    const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
+    spectatorCount++
+    const shirt = new THREE.MeshStandardMaterial({ color, flatShading: true })
+    addPerson(x, FLOOR_Y + 2, z, 1, shirt)
+  }
+}
+
+// 4b-2c. A trophy shelf at each end. Fixed pattern, not randomness,
+// so every device builds exactly the same room.
+const TROPHY_TYPES = [
   {
-    height: 0.9, radius: 0.24,
-    shape: makeShape(0.9, [
-      [0, 0], [0.18, 0], [0.26, 0.3], [0.2, 0.6], [0.09, 0.75], [0.15, 0.9], [0, 0.9],
+    height: 1.4, radius: 0.4, color: 0xffc300,
+    shape: makeShape(1.4, [
+      [0, 0], [0.35, 0], [0.35, 0.12], [0.1, 0.2], [0.08, 0.6],
+      [0.4, 0.9], [0.42, 1.4], [0.3, 1.4], [0, 0.95],
     ]),
   },
   {
-    height: 1, radius: 0.16,
+    height: 1, radius: 0.32, color: 0xcfd8dc,
     shape: makeShape(1, [
-      [0, 0], [0.16, 0], [0.16, 0.6], [0.06, 0.78], [0.06, 1], [0, 1],
-    ]),
-  },
-  {
-    height: 0.4, radius: 0.24,
-    shape: makeShape(0.4, [
-      [0, 0], [0.2, 0], [0.24, 0.4], [0, 0.4],
+      [0, 0], [0.28, 0], [0.28, 0.1], [0.08, 0.2], [0.08, 0.5],
+      [0.32, 0.7], [0.2, 1], [0, 1],
     ]),
   },
 ]
 
-const OBJECT_COLOURS = [0x2a9d8f, 0xe9c46a, 0xf4a261, 0x8ecae6, 0xb5838d]
 const shelfPaint = new THREE.MeshStandardMaterial({ color: 0x5c4033 })
 
 type Breakable = {
@@ -201,56 +266,48 @@ type Breakable = {
 }
 
 const breakables = new Map<number, Breakable>()
-let objectCount = 0
 
-function addShelf(x: number, z: number, length: number, alongX: boolean) {
-  const sizeX = alongX ? length : 0.7
-  const sizeZ = alongX ? 0.7 : length
-  const count = Math.floor(length / 1.2)
+function addTrophyShelf(z: number) {
+  const shelfY = 4
 
-  for (const y of [0.5, 2.5, 4.5]) {
-    const board = new THREE.Mesh(new THREE.BoxGeometry(sizeX, 0.15, sizeZ), shelfPaint)
-    board.position.set(x, y, z)
-    scene.add(board)
+  const board = new THREE.Mesh(new THREE.BoxGeometry(26, 0.2, 1), shelfPaint)
+  board.position.set(0, shelfY, z)
+  scene.add(board)
 
-    world.createCollider(
-      RAPIER.ColliderDesc.cuboid(sizeX / 2, 0.075, sizeZ / 2).setTranslation(x, y, z)
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(13, 0.1, 0.5).setTranslation(0, shelfY, z)
+  )
+
+  for (let i = 0; i < 12; i++) {
+    const type = TROPHY_TYPES[i % TROPHY_TYPES.length]
+    const x = i * 2 - 11
+    const y = shelfY + 0.1 + type.height / 2
+
+    const mesh = new THREE.Mesh(
+      type.shape,
+      new THREE.MeshStandardMaterial({
+        color: type.color,
+        flatShading: true,
+        metalness: 0.4,
+        roughness: 0.3,
+      })
+    )
+    mesh.position.set(x, y, z)
+    scene.add(mesh)
+
+    const collider = world.createCollider(
+      RAPIER.ColliderDesc.cylinder(type.height / 2, type.radius)
+        .setTranslation(x, y, z)
+        .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+        .setContactForceEventThreshold(30)
     )
 
-    for (let i = 0; i < count; i++) {
-      const type = OBJECT_TYPES[objectCount % OBJECT_TYPES.length]
-      const color = OBJECT_COLOURS[objectCount % OBJECT_COLOURS.length]
-      objectCount++
-
-      const offset = (i + 0.5) * (length / count) - length / 2
-      const objectX = alongX ? x + offset : x
-      const objectZ = alongX ? z : z + offset
-      const objectY = y + 0.075 + type.height / 2
-
-      const mesh = new THREE.Mesh(
-        type.shape,
-        new THREE.MeshStandardMaterial({ color, flatShading: true })
-      )
-      mesh.position.set(objectX, objectY, objectZ)
-      scene.add(mesh)
-
-      const collider = world.createCollider(
-        RAPIER.ColliderDesc.cylinder(type.height / 2, type.radius)
-          .setTranslation(objectX, objectY, objectZ)
-          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-          .setContactForceEventThreshold(30)
-      )
-
-      breakables.set(collider.handle, { collider, mesh, color, broken: false })
-    }
+    breakables.set(collider.handle, { collider, mesh, color: type.color, broken: false })
   }
 }
 
-for (const side of [-1, 1]) {
-  addShelf(0, side * 9.5, 14, true)
-  addShelf(-7.5, side * 7, 4, false)
-  addShelf(7.5, side * 7, 4, false)
-}
+addTrophyShelf(19)
+addTrophyShelf(-19)
 
 function smash(item: Breakable) {
   if (item.broken) return
@@ -477,7 +534,7 @@ function endTurn() {
 // Runs after every physics step, so every device agrees
 function afterStep() {
   for (const piece of pieces) {
-    if (!piece.out && piece.body.translation().y < -3) {
+    if (!piece.out && piece.body.translation().y < -10) {
       piece.out = true
       piece.mesh.visible = false
       piece.body.setEnabled(false)
@@ -528,6 +585,14 @@ window.addEventListener('keydown', (event) => {
 })
 
 showStatus()
+
+// 4e. Everything built so far casts and receives shadows
+scene.traverse((object) => {
+  if (object instanceof THREE.Mesh) {
+    object.castShadow = true
+    object.receiveShadow = true
+  }
+})
 
 // 5. Drag to orbit, pinch or scroll to zoom
 const controls = new OrbitControls(camera, renderer.domElement)
