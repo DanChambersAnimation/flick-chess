@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
+import { burst, addShake, updateEffects } from './effects'
 
 await RAPIER.init()
 
@@ -126,6 +127,7 @@ const bluePaint = new THREE.MeshStandardMaterial({ color: 0x1d3557, flatShading:
 // 4b. The invisible physics world
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
 world.timestep = 1 / 120
+const eventQueue = new RAPIER.EventQueue(true)
 
 world.createCollider(
   RAPIER.ColliderDesc.cuboid(4, 0.1, 4).setTranslation(0, -0.1, 0)
@@ -164,6 +166,127 @@ function addPerson(z: number, paint: THREE.Material) {
 
 addPerson(7.2, redPaint)
 addPerson(-7.2, bluePaint)
+
+// 4b-2b. Shelves of breakable objects. These use a fixed pattern, not
+// randomness, so every device builds exactly the same room.
+const OBJECT_TYPES = [
+  {
+    height: 0.9, radius: 0.24,
+    shape: makeShape(0.9, [
+      [0, 0], [0.18, 0], [0.26, 0.3], [0.2, 0.6], [0.09, 0.75], [0.15, 0.9], [0, 0.9],
+    ]),
+  },
+  {
+    height: 1, radius: 0.16,
+    shape: makeShape(1, [
+      [0, 0], [0.16, 0], [0.16, 0.6], [0.06, 0.78], [0.06, 1], [0, 1],
+    ]),
+  },
+  {
+    height: 0.4, radius: 0.24,
+    shape: makeShape(0.4, [
+      [0, 0], [0.2, 0], [0.24, 0.4], [0, 0.4],
+    ]),
+  },
+]
+
+const OBJECT_COLOURS = [0x2a9d8f, 0xe9c46a, 0xf4a261, 0x8ecae6, 0xb5838d]
+const shelfPaint = new THREE.MeshStandardMaterial({ color: 0x5c4033 })
+
+type Breakable = {
+  collider: RAPIER.Collider
+  mesh: THREE.Mesh
+  color: number
+  broken: boolean
+}
+
+const breakables = new Map<number, Breakable>()
+let objectCount = 0
+
+function addShelf(x: number, z: number, length: number, alongX: boolean) {
+  const sizeX = alongX ? length : 0.7
+  const sizeZ = alongX ? 0.7 : length
+  const count = Math.floor(length / 1.2)
+
+  for (const y of [0.5, 2.5, 4.5]) {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(sizeX, 0.15, sizeZ), shelfPaint)
+    board.position.set(x, y, z)
+    scene.add(board)
+
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(sizeX / 2, 0.075, sizeZ / 2).setTranslation(x, y, z)
+    )
+
+    for (let i = 0; i < count; i++) {
+      const type = OBJECT_TYPES[objectCount % OBJECT_TYPES.length]
+      const color = OBJECT_COLOURS[objectCount % OBJECT_COLOURS.length]
+      objectCount++
+
+      const offset = (i + 0.5) * (length / count) - length / 2
+      const objectX = alongX ? x + offset : x
+      const objectZ = alongX ? z : z + offset
+      const objectY = y + 0.075 + type.height / 2
+
+      const mesh = new THREE.Mesh(
+        type.shape,
+        new THREE.MeshStandardMaterial({ color, flatShading: true })
+      )
+      mesh.position.set(objectX, objectY, objectZ)
+      scene.add(mesh)
+
+      const collider = world.createCollider(
+        RAPIER.ColliderDesc.cylinder(type.height / 2, type.radius)
+          .setTranslation(objectX, objectY, objectZ)
+          .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+          .setContactForceEventThreshold(30)
+      )
+
+      breakables.set(collider.handle, { collider, mesh, color, broken: false })
+    }
+  }
+}
+
+for (const side of [-1, 1]) {
+  addShelf(0, side * 9.5, 14, true)
+  addShelf(-7.5, side * 7, 4, false)
+  addShelf(7.5, side * 7, 4, false)
+}
+
+function smash(item: Breakable) {
+  if (item.broken) return
+  item.broken = true
+  item.mesh.visible = false
+  item.collider.setEnabled(false)
+  burst(scene, item.mesh.position, item.color, 24, 5)
+  addShake(0.1)
+}
+
+function handleImpacts() {
+  eventQueue.drainContactForceEvents((event) => {
+    const handle1 = event.collider1()
+    const handle2 = event.collider2()
+
+    const item = breakables.get(handle1) ?? breakables.get(handle2)
+    if (item) {
+      smash(item)
+      return
+    }
+
+    // Spark at the moving piece, or halfway between two pieces
+    const collider1 = world.getCollider(handle1)
+    const collider2 = world.getCollider(handle2)
+    const a = collider1.translation()
+    const b = collider2.translation()
+
+    let at = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }
+    if (!collider1.parent()) at = b
+    if (!collider2.parent()) at = a
+
+    const size = Math.min(event.totalForceMagnitude() / 150, 4)
+    burst(scene, at, 0xffb703, Math.round(6 * size), 3 + size)
+    addShake(0.02 * size)
+  })
+}
 
 // 4b-3. Invisible side walls that only bishops can hit
 const WALL_GROUP = 0x00040002
@@ -214,7 +337,9 @@ function addPiece(kind: PieceKind, x: number, z: number, side: Side) {
       .setDensity(type.density)
       .setFriction(0.5)
       .setRestitution(kind === 'bishop' ? 0.8 : 0.3)
-      .setCollisionGroups(kind === 'bishop' ? BISHOP_GROUP : OTHER_PIECE_GROUP),
+      .setCollisionGroups(kind === 'bishop' ? BISHOP_GROUP : OTHER_PIECE_GROUP)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(150),
     body
   )
 
@@ -390,6 +515,11 @@ function resetGame() {
   winner = null
   hasFlicked.red = false
   hasFlicked.blue = false
+  for (const item of breakables.values()) {
+    item.broken = false
+    item.mesh.visible = true
+    item.collider.setEnabled(true)
+  }
   showStatus()
 }
 
@@ -562,8 +692,9 @@ renderer.setAnimationLoop((time) => {
   // Run as many fixed physics steps as that time pays for
   while (unspentTime >= world.timestep) {
     stepQueen()
-    world.step()
+    world.step(eventQueue)
     afterStep()
+    handleImpacts()
     unspentTime -= world.timestep
   }
 
@@ -576,5 +707,8 @@ renderer.setAnimationLoop((time) => {
   }
 
   controls.update()
+  const shake = updateEffects(scene, elapsed)
+  camera.position.add(shake)
   renderer.render(scene, camera)
+  camera.position.sub(shake)
 })
