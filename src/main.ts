@@ -42,47 +42,70 @@ const silhouette = [
 ].map(([x, y]) => new THREE.Vector2(x, y))
 
 const pawnShape = new THREE.LatheGeometry(silhouette, 8) // 8 sides = chunky
-const pawnPaint = new THREE.MeshStandardMaterial({ color: 0xd62828, flatShading: true })
-const pawn = new THREE.Mesh(pawnShape, pawnPaint)
 pawnShape.translate(0, -0.46, 0)
-scene.add(pawn)
 
-//4b. The invisible physics world
-const world = new RAPIER.World({ x:0, y:-9.81, z:0 })
+const redPaint = new THREE.MeshStandardMaterial({ color: 0xd62828, flatShading: true })
+const bluePaint = new THREE.MeshStandardMaterial({ color: 0x1d3557, flatShading: true })
+
+// 4b. The invisible physics world
+const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
 world.timestep = 1 / 120
 
 world.createCollider(
-	RAPIER.ColliderDesc.cuboid(4, 0.1, 4).setTranslation(0, -0.1, 0)
+  RAPIER.ColliderDesc.cuboid(4, 0.1, 4).setTranslation(0, -0.1, 0)
 )
 
-const pawnBody = world.createRigidBody(
-	RAPIER.RigidBodyDesc.dynamic()
-	  .setTranslation(0.5, 0.46, 0.5)
-	  .setLinearDamping(0.3)
-	  .setAngularDamping(0.3)
-)
-world.createCollider(
-	RAPIER.ColliderDesc.cylinder(0.46, 0.3)
-	  .setDensity(1)
-	  .setFriction(0.5)
-	  .setRestitution(0.3),
-	pawnBody
-)
+// 4c. Every piece is a visible mesh, an invisible body and a home square
+type Piece = {
+  mesh: THREE.Mesh
+  body: RAPIER.RigidBody
+  homeX: number
+  homeZ: number
+}
 
-//4c. Temporary controls: Space flicks, R resets
+const pieces: Piece[] = []
+
+function addPawn(x: number, z: number, paint: THREE.Material) {
+  const mesh = new THREE.Mesh(pawnShape, paint)
+  scene.add(mesh)
+
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, 0.46, z)
+      .setLinearDamping(0.3)
+      .setAngularDamping(0.3)
+  )
+  world.createCollider(
+    RAPIER.ColliderDesc.cylinder(0.46, 0.3)
+      .setDensity(1)
+      .setFriction(0.5)
+      .setRestitution(0.3),
+    body
+  )
+
+  pieces.push({ mesh, body, homeX: x, homeZ: z })
+}
+
+for (let file = 0; file < 8; file++) {
+  addPawn(file - 3.5, 2.5, redPaint)
+  addPawn(file - 3.5, -2.5, bluePaint)
+}
+
+// 4d. Temporary control: R puts everything back
 window.addEventListener('keydown', (event) => {
-  if (event.code === 'KeyR') {
-  	pawnBody.setTranslation({ x:0.5, y:0.46, z:0.5 }, true)
-  	pawnBody.setRotation({ x:0, y:0, z:0, w:1 }, true)
-  	pawnBody.setLinvel({ x:0, y:0, z:0 }, true)
-  	pawnBody.setAngvel({ x:0, y:0, z:0 }, true)
+  if (event.code !== 'KeyR') return
+
+  for (const piece of pieces) {
+    piece.body.setTranslation({ x: piece.homeX, y: 0.46, z: piece.homeZ }, true)
+    piece.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true)
+    piece.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+    piece.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
   }
 })
 
 // 5. Drag to orbit, pinch or scroll to zoom
 const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
-
 
 // 5b. The aiming arrow: a flat shaft and a four-sided cone
 const arrow = new THREE.Group()
@@ -102,6 +125,7 @@ const pointer = new THREE.Vector2()
 const boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const shot = new THREE.Vector3()
 let aiming = false
+let selected: Piece | null = null
 const liftSlider = document.querySelector<HTMLInputElement>('#lift')!
 
 function pointOnBoard(event: PointerEvent) {
@@ -115,9 +139,9 @@ function pointOnBoard(event: PointerEvent) {
 function updateArrow() {
   const length = shot.length()
   const power = length / MAX_PULL
-  const x = pawn.position.x
-  const z = pawn.position.z
-
+  if (!selected) return
+  const x = selected.mesh.position.x
+  const z = selected.mesh.position.z
   arrow.visible = length > 0.1
   arrow.position.set(x, 0.05, z)
   const lift = Number(liftSlider.value)
@@ -135,16 +159,24 @@ function stopAiming() {
   controls.enabled = true
 }
 
-// capture: true means we hear the press before OrbitControls does
 renderer.domElement.addEventListener('pointerdown', (event) => {
   const spot = pointOnBoard(event)
   if (!spot) return
 
-  const onPawn =
-    raycaster.intersectObject(pawn).length > 0 ||
-    spot.distanceTo(pawn.position) < 0.8
+  // Did the ray hit a piece? If not, allow for a slightly clumsy thumb.
+  const hit = raycaster.intersectObjects(pieces.map((p) => p.mesh))[0]
+  let touched = pieces.find((p) => p.mesh === hit?.object)
 
-  if (onPawn) {
+  if (!touched) {
+    touched = pieces.find((p) => {
+      const dx = p.mesh.position.x - spot.x
+      const dz = p.mesh.position.z - spot.z
+      return dx * dx + dz * dz < 0.25
+    })
+  }
+
+  if (touched) {
+    selected = touched
     aiming = true
     controls.enabled = false
     shot.set(0, 0, 0)
@@ -152,23 +184,24 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
 }, { capture: true })
 
 window.addEventListener('pointermove', (event) => {
-  if (!aiming) return
+  if (!aiming || !selected) return
   const spot = pointOnBoard(event)
   if (!spot) return
 
-  shot.set(pawn.position.x - spot.x, 0, pawn.position.z - spot.z)
+  const from = selected.mesh.position
+  shot.set(from.x - spot.x, 0, from.z - spot.z)
   shot.clampLength(0, MAX_PULL)
   updateArrow()
 })
 
 window.addEventListener('pointerup', () => {
-  if (!aiming) return
+  if (!aiming || !selected) return
   stopAiming()
   if (shot.length() <= 0.1) return
 
   const strength = MAX_IMPULSE / MAX_PULL
   const lift = Number(liftSlider.value)
-  pawnBody.applyImpulse(
+  selected.body.applyImpulse(
     {
       x: shot.x * strength,
       y: shot.length() * strength * lift,
@@ -206,10 +239,12 @@ renderer.setAnimationLoop((time) => {
   }
 
   // Copy the invisible body's position onto the visible pawn
-  const position = pawnBody.translation()
-  const rotation = pawnBody.rotation()
-  pawn.position.set(position.x, position.y, position.z)
-  pawn.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
+  for (const piece of pieces) {
+    const position = piece.body.translation()
+    const rotation = piece.body.rotation()
+    piece.mesh.position.set(position.x, position.y, position.z)
+    piece.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
+  }
 
   controls.update()
   renderer.render(scene, camera)
