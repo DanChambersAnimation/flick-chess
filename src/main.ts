@@ -243,6 +243,47 @@ let rollingSteps = 0
 const hasFlicked = { red: false, blue: false }
 const statusLine = document.querySelector<HTMLDivElement>('#status')!
 
+let hook: { body: RAPIER.RigidBody; x: number; z: number } | null = null
+let queenRun: {
+  piece: Piece
+  x: number
+  z: number
+  vx: number
+  vz: number
+} | null = null
+
+function startQueen(piece: Piece, vx: number, vz: number) {
+  const position = piece.body.translation()
+  piece.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true)
+  queenRun = { piece, x: position.x, z: position.z, vx, vz }
+}
+
+function stepQueen() {
+  if (!queenRun) return
+  const run = queenRun
+
+  run.x += run.vx * world.timestep
+  run.z += run.vz * world.timestep
+  run.vx *= 0.99
+  run.vz *= 0.99
+
+  // Off one edge, back on at the opposite edge
+  let wrapped = false
+  if (run.x > 4) { run.x -= 8; wrapped = true }
+  if (run.x < -4) { run.x += 8; wrapped = true }
+  if (run.z > 4) { run.z -= 8; wrapped = true }
+  if (run.z < -4) { run.z += 8; wrapped = true }
+
+  const target = { x: run.x, y: run.piece.homeY, z: run.z }
+  if (wrapped) run.piece.body.setTranslation(target, true)
+  else run.piece.body.setNextKinematicTranslation(target)
+
+  if (run.vx * run.vx + run.vz * run.vz < 0.25) {
+    run.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
+    queenRun = null
+  }
+}
+
 function isFallen(piece: Piece) {
   const q = piece.body.rotation()
   return 1 - 2 * (q.x * q.x + q.z * q.z) < 0.7
@@ -285,6 +326,7 @@ function startRolling() {
 }
 
 function endTurn() {
+  hook = null
   for (const piece of pieces) {
     const position = piece.body.translation()
     if (Math.abs(position.x) > 4 || Math.abs(position.z) > 4) piece.out = true
@@ -320,11 +362,20 @@ function afterStep() {
   if (phase !== 'rolling') return
   rollingSteps++
 
-  const settled = pieces.every((p) => p.out || isSlow(p))
+  if (hook && rollingSteps > 30 && rollingSteps <= 90) {
+    hook.body.applyImpulse({ x: hook.x, y: 0, z: hook.z }, true)
+  }
+
+  const settled = !queenRun && pieces.every((p) => p.out || isSlow(p))
   if ((settled && rollingSteps > 30) || rollingSteps >= 1800) endTurn()
 }
 
 function resetGame() {
+  if (queenRun) {
+    queenRun.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
+    queenRun = null
+  }
+  hook = null
   for (const piece of pieces) {
     piece.out = false
     piece.mesh.visible = true
@@ -371,10 +422,18 @@ const shot = new THREE.Vector3()
 let aiming = false
 let selected: Piece | null = null
 const liftSlider = document.querySelector<HTMLInputElement>('#lift')!
+const hookButton = document.querySelector<HTMLButtonElement>('#hook')!
+let hookDirection = 1
+
+hookButton.addEventListener('click', () => {
+  hookDirection = -hookDirection
+  hookButton.textContent = hookDirection === 1 ? 'Hook: right' : 'Hook: left'
+})
 
 function getLift(kind: PieceKind) {
   const slider = Number(liftSlider.value)
   if (kind === 'knight') return Math.max(slider, 0.5)
+  if (kind === 'queen') return 0
   return slider * PIECE_TYPES[kind].liftScale
 }
 
@@ -453,6 +512,12 @@ window.addEventListener('pointerup', () => {
   stopAiming()
   if (shot.length() <= 0.1) return
 
+  if (selected.kind === 'queen') {
+    startQueen(selected, shot.x * 4, shot.z * 4)
+    startRolling()
+    return
+  }
+
   const type = PIECE_TYPES[selected.kind]
   const strength = type.maxImpulse / MAX_PULL
   const lift = getLift(selected.kind)
@@ -465,6 +530,11 @@ window.addEventListener('pointerup', () => {
     },
     true
   )
+  if (selected.kind === 'knight') {
+    const sideways = (strength * 0.5 * hookDirection) / 60
+    hook = { body: selected.body, x: -shot.z * sideways, z: shot.x * sideways }
+  }
+
   startRolling()
 })
 
@@ -491,6 +561,7 @@ renderer.setAnimationLoop((time) => {
 
   // Run as many fixed physics steps as that time pays for
   while (unspentTime >= world.timestep) {
+    stepQueen()
     world.step()
     afterStep()
     unspentTime -= world.timestep

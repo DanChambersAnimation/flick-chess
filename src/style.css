@@ -19,3 +19,11 @@ canvas {display: block; }
   font: bold 20px sans-serif;
   pointer-events: none;
 }
+#hook {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  min-height: 44px;
+  padding: 0 16px;
+  font: bold 16px sans-serif;
+}
