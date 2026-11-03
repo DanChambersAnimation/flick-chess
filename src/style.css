@@ -1,0 +1,11 @@
+html, body, #app { margin: 0; height: 100%; background: #2b2d42; overflow: hidden; }
+canvas {display: block; }
+#lift {
+  position: fixed;
+  right: 16px;
+  top: 25%;
+  height: 50%;
+  width: 44px;
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
