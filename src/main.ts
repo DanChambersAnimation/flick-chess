@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
 import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
-import { makeArm, startReach, setAim, restArm, flickArm, updateArms, type Arm } from './arm'
+import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, type Arm } from './arm'
+import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
 import { makeCrowd, updateCrowd, excite, type SpectatorPlan } from './crowd'
 import { startAudio, play, type SoundName } from './sound'
 
@@ -201,48 +202,79 @@ world.createCollider(
 
 const players = new Map<number, Character>()
 
-function addPlayer(z: number, paint: THREE.Material) {
-  // Everything in this group pivots at the player's feet
+const bodyHits = new Map<number, { wobble: Wobble; side: Side; z: number }>()
+const wobbles: Wobble[] = []
+
+function addPlayer(z: number, paint: THREE.Material, side: Side) {
+  // The body pivots at the feet, then bends through a stack of segments
   const body = new THREE.Group()
   body.position.set(0, FLOOR_Y, z)
   scene.add(body)
 
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 2), paint)
-  torso.position.set(0, 3, 0)
-  body.add(torso)
+  const segmentShape = new THREE.BoxGeometry(4, 2.05, 2)
+  const parts: THREE.Group[] = []
+  let parent: THREE.Group = body
 
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(2, 3, 1).setTranslation(0, -1, z)
-  )
+  for (let i = 0; i < 3; i++) {
+    const segment = new THREE.Group()
+    segment.position.y = i === 0 ? 0 : 2
+    parent.add(segment)
+
+    const mesh = new THREE.Mesh(segmentShape, paint)
+    mesh.position.y = 1
+    segment.add(mesh)
+
+    parts.push(segment)
+    parent = segment
+  }
+
+  // The head hangs from a neck joint on top of the stack
+  const neck = new THREE.Group()
+  neck.position.y = 2
+  parent.add(neck)
+  parts.push(neck)
 
   const character = makeCharacter(2)
-  character.group.position.set(0, 7.5, 0)
+  character.group.position.y = 1.5
   character.group.rotation.y = z > 0 ? Math.PI : 0
-  body.add(character.group)
+  neck.add(character.group)
 
-  const head = world.createCollider(
+  const torsoCollider = world.createCollider(
+    RAPIER.ColliderDesc.cuboid(2, 3, 1)
+      .setTranslation(0, -1, z)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(40)
+  )
+
+  const headCollider = world.createCollider(
     RAPIER.ColliderDesc.cylinder(1.5, 1.8)
       .setTranslation(0, 3.5, z)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(40)
   )
-  players.set(head.handle, character)
 
-  return body
+  players.set(headCollider.handle, character)
+
+  const wobble = makeWobble(parts)
+  wobbles.push(wobble)
+  bodyHits.set(headCollider.handle, { wobble, side, z })
+  bodyHits.set(torsoCollider.handle, { wobble, side, z })
+
+  return { body, top: parent }
 }
 
-const redBody = addPlayer(7.2, redPaint)
-const blueBody = addPlayer(-7.2, bluePaint)
+const red = addPlayer(7.2, redPaint, 'red')
+const blue = addPlayer(-7.2, bluePaint, 'blue')
 
 // Shoulders are measured from each player's feet, and start inside the torso
 const arms = {
   red: [
-    makeArm(scene, redBody, new THREE.Vector3(1.7, 5.3, -0.3), redPaint, -1, false),
-    makeArm(scene, redBody, new THREE.Vector3(-1.7, 5.3, -0.3), redPaint, -1, true),
+    makeArm(scene, red.body, red.top, new THREE.Vector3(1.7, 1.3, -0.3), redPaint, -1, false),
+    makeArm(scene, red.body, red.top, new THREE.Vector3(-1.7, 1.3, -0.3), redPaint, -1, true),
   ],
   blue: [
-    makeArm(scene, blueBody, new THREE.Vector3(-1.7, 5.3, 0.3), bluePaint, 1, false),
-    makeArm(scene, blueBody, new THREE.Vector3(1.7, 5.3, 0.3), bluePaint, 1, true),
+    makeArm(scene, blue.body, blue.top, new THREE.Vector3(-1.7, 1.3, 0.3), bluePaint, 1, false),
+    makeArm(scene, blue.body, blue.top, new THREE.Vector3(1.7, 1.3, 0.3), bluePaint, 1, true),
   ],
 }
 const allArms = [...arms.red, ...arms.blue]
@@ -425,6 +457,14 @@ function smash(item: Breakable) {
   play('crash')
 }
 
+function shakePlayer(handle: number, at: { x: number; z: number }, strength: number) {
+  const hit = bodyHits.get(handle)
+  if (!hit) return
+
+  hitWobble(hit.wobble, -at.x, hit.z - at.z, strength)
+  for (const arm of arms[hit.side]) flailArm(arm)
+}
+
 const HIT_SOUNDS: Record<string, SoundName> = {
   'Hat!': 'clonk',
   'Bonk!': 'clonk',
@@ -453,11 +493,19 @@ function handleImpacts() {
       const at = world.getCollider(pieceHandle).translation()
       const result = hitCharacter(scene, person, at)
       statusLine.textContent = result
+      shakePlayer(players.has(handle1) ? handle1 : handle2, at, 1)
       play(HIT_SOUNDS[result])
       excite(crowd, 1)
       return
     }
-
+    const bodyHandle = bodyHits.has(handle1) ? handle1 : bodyHits.has(handle2) ? handle2 : null
+    if (bodyHandle !== null) {
+      const pieceHandle = bodyHandle === handle1 ? handle2 : handle1
+      shakePlayer(bodyHandle, world.getCollider(pieceHandle).translation(), 0.5)
+      excite(crowd, 0.4)
+      play('clonk')
+      return
+    }
     // Spark at the moving piece, or halfway between two pieces
     const collider1 = world.getCollider(handle1)
     const collider2 = world.getCollider(handle2)
@@ -967,6 +1015,7 @@ renderer.setAnimationLoop((time) => {
   }
 
   updateArms(allArms, elapsed)
+  for (const wobble of wobbles) updateWobble(wobble, elapsed)
   updateCrowd(crowd, findFocus(), elapsed)
   controls.update()
   const shake = updateEffects(scene, elapsed)

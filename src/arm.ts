@@ -46,6 +46,8 @@ export type Arm = {
   flickTime: number
   lean: number
   leanSpeed: number
+  armSide: number
+  flailTime: number
 }
 
 const sleeveShape = new THREE.BoxGeometry(0.4, 0.4, 1)
@@ -62,6 +64,7 @@ function box(width: number, height: number, length: number) {
 export function makeArm(
   scene: THREE.Scene,
   body: THREE.Group,
+  shoulderParent: THREE.Object3D,
   shoulderPoint: THREE.Vector3,
   paint: THREE.Material,
   facing: number,
@@ -69,7 +72,7 @@ export function makeArm(
 ): Arm {
   const shoulder = new THREE.Object3D()
   shoulder.position.copy(shoulderPoint)
-  body.add(shoulder)
+  shoulderParent.add(shoulder)
 
   const sleeve = new THREE.Mesh(sleeveShape, paint)
   shoulder.getWorldPosition(sleeve.position)
@@ -132,6 +135,8 @@ export function makeArm(
     flickTime: 0,
     lean: 0,
     leanSpeed: 0,
+    armSide: shoulderPoint.x > 0 ? 1 : -1,
+    flailTime: 0,
   }
 }
 
@@ -146,6 +151,10 @@ export function setAim(arm: Arm, target: THREE.Vector3, shot: THREE.Vector3, pow
   arm.target.copy(target)
   if (shot.lengthSq() > 0.0001) arm.direction.copy(shot).normalize()
   arm.power = power
+}
+
+export function flailArm(arm: Arm) {
+  arm.flailTime = 1.6
 }
 
 export function restArm(arm: Arm) {
@@ -170,7 +179,15 @@ export function updateArm(arm: Arm, elapsed: number) {
   arm.shoulder.getWorldPosition(arm.sleeve.position)
 
   // Move the hand: when reaching, it arcs up and drops in from above
-  if (arm.mode === 'rest') {
+  if (arm.mode === 'rest' && arm.flailTime > 0) {
+    // Inflatable tube-man arm waving
+    arm.flailTime -= elapsed
+    const t = arm.flailTime
+    goal.copy(arm.sleeve.position)
+    goal.x += arm.armSide * (2.2 + Math.sin(t * 9) * 0.8)
+    goal.y += 1.2 + Math.sin(t * 13 + arm.armSide) * 2
+    goal.z += arm.facing * (1 + Math.cos(t * 11))
+  } else if (arm.mode === 'rest') {
     goal.copy(arm.restPoint)
   } else {
     goal.copy(arm.target).addScaledVector(arm.direction, -POSE.handBack)
