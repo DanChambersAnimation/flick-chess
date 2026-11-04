@@ -1,10 +1,11 @@
 import * as THREE from 'three'
 
 type Bit = {
-  mesh: THREE.Mesh
+  object: THREE.Object3D
   velocity: THREE.Vector3
   life: number
   startLife: number
+  startScale: number
 }
 
 const MAX_BITS = 300
@@ -34,9 +35,9 @@ export function burst(
   speed: number
 ) {
   for (let i = 0; i < count && bits.length < MAX_BITS; i++) {
-    const mesh = new THREE.Mesh(bitShape, getPaint(color))
-    mesh.position.set(at.x, at.y, at.z)
-    scene.add(mesh)
+    const object = new THREE.Mesh(bitShape, getPaint(color))
+    object.position.set(at.x, at.y, at.z)
+    scene.add(object)
 
     const velocity = new THREE.Vector3(
       Math.random() - 0.5,
@@ -45,8 +46,18 @@ export function burst(
     ).multiplyScalar(speed)
 
     const life = 0.4 + Math.random() * 0.5
-    bits.push({ mesh, velocity, life, startLife: life })
+    bits.push({ object, velocity, life, startLife: life, startScale: 1 })
   }
+}
+
+// Sends an existing object flying, like a hat or a tooth
+export function throwPart(object: THREE.Object3D, velocity: THREE.Vector3, life: number) {
+  bits.push({ object, velocity, life, startLife: life, startScale: object.scale.x })
+}
+
+export function clearBits(scene: THREE.Scene) {
+  for (const bit of bits) scene.remove(bit.object)
+  bits.length = 0
 }
 
 export function addShake(amount: number) {
@@ -60,16 +71,16 @@ export function updateEffects(scene: THREE.Scene, elapsed: number) {
     bit.life -= elapsed
 
     if (bit.life <= 0) {
-      scene.remove(bit.mesh)
+      scene.remove(bit.object)
       bits.splice(i, 1)
       continue
     }
 
     bit.velocity.y -= GRAVITY * elapsed
-    bit.mesh.position.addScaledVector(bit.velocity, elapsed)
-    bit.mesh.rotation.x += elapsed * 8
-    bit.mesh.rotation.y += elapsed * 6
-    bit.mesh.scale.setScalar(bit.life / bit.startLife)
+    bit.object.position.addScaledVector(bit.velocity, elapsed)
+    bit.object.rotation.x += elapsed * 8
+    bit.object.rotation.y += elapsed * 6
+    bit.object.scale.setScalar(bit.startScale * (bit.life / bit.startLife))
   }
 
   shake.set(

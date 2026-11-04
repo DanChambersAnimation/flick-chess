@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
-import { burst, addShake, updateEffects } from './effects'
+import { burst, addShake, updateEffects, clearBits } from './effects'
+import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
 
 await RAPIER.init()
 
@@ -210,8 +211,33 @@ function addPerson(
   )
 }
 
-addPerson(0, FLOOR_Y, 7.2, 2, redPaint)
-addPerson(0, FLOOR_Y, -7.2, 2, bluePaint)
+const players = new Map<number, Character>()
+
+function addPlayer(z: number, paint: THREE.Material) {
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 2), paint)
+  torso.position.set(0, -1, z)
+  scene.add(torso)
+
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(2, 3, 1).setTranslation(0, -1, z)
+  )
+
+  const character = makeCharacter(2)
+  character.group.position.set(0, 3.5, z)
+  character.group.rotation.y = z > 0 ? Math.PI : 0
+  scene.add(character.group)
+
+  const head = world.createCollider(
+    RAPIER.ColliderDesc.cylinder(1.5, 1.8)
+      .setTranslation(0, 3.5, z)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(40)
+  )
+  players.set(head.handle, character)
+}
+
+addPlayer(7.2, redPaint)
+addPlayer(-7.2, bluePaint)
 
 // 4b-2b. Spectators on a low stand behind each player
 const standPaint = new THREE.MeshStandardMaterial({ color: 0x3a3440 })
@@ -341,6 +367,15 @@ function handleImpacts() {
     const item = breakables.get(handle1) ?? breakables.get(handle2)
     if (item) {
       smash(item)
+      return
+    }
+
+
+    const person = players.get(handle1) ?? players.get(handle2)
+    if (person) {
+      const pieceHandle = players.has(handle1) ? handle2 : handle1
+      const at = world.getCollider(pieceHandle).translation()
+      statusLine.textContent = hitCharacter(scene, person, at)
       return
     }
 
@@ -587,6 +622,8 @@ function resetGame() {
   winner = null
   hasFlicked.red = false
   hasFlicked.blue = false
+  clearBits(scene)
+  for (const person of players.values()) resetCharacter(person)
   for (const item of breakables.values()) {
     item.broken = false
     item.mesh.visible = true
