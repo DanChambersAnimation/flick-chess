@@ -11,7 +11,8 @@ type SavedPart = {
 
 export type HitZone = 'top' | 'eyes' | 'mouth'
 
-// askew: tips over, then flies off. half: loses half its parts, then the rest.
+// askew: tips over until its last hit, then flies off.
+// half: loses half its parts, then the rest.
 type ItemStyle = 'askew' | 'half'
 
 export type Item = {
@@ -19,11 +20,9 @@ export type Item = {
   zone: HitZone
   style: ItemStyle
   parts: THREE.Object3D[]
-  stage: number // 0 is untouched, 1 is damaged, 2 is gone
-  shift?: { x: number; y: number } // How far an askew item moves as it tips
+  stages: number // How many hits it takes to lose this item
+  stage: number // How many hits it has taken so far
 }
-
-const STAGES = 2
 
 export type Character = {
   group: THREE.Group
@@ -152,9 +151,9 @@ export function makeCharacter(size: number, centreY: number): Character {
   hat.add(band)
 
   const items: Item[] = [
-    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stage: 0, shift: { x: 0.1, y: 0.32 } },
-    { name: 'Glasses', zone: 'eyes', style: 'askew', parts: [glasses], stage: 0 },
-    { name: 'Teeth', zone: 'mouth', style: 'half', parts: teeth, stage: 0 },
+    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stages: 1, stage: 0 },
+    { name: 'Glasses', zone: 'eyes', style: 'askew', parts: [glasses], stages: 2, stage: 0 },
+    { name: 'Teeth', zone: 'mouth', style: 'half', parts: teeth, stages: 2, stage: 0 },
   ]
 
   // Remember where everything belongs, ready for a new game
@@ -173,7 +172,7 @@ export function makeCharacter(size: number, centreY: number): Character {
 
 // How many more hits this character can take before they forfeit
 export function hitsLeft(person: Character) {
-  return person.items.reduce((total, item) => total + STAGES - item.stage, 0)
+  return person.items.reduce((total, item) => total + item.stages - item.stage, 0)
 }
 
 export function newFlick(person: Character) {
@@ -203,10 +202,9 @@ function damageItem(scene: THREE.Scene, item: Item) {
   }
 
   for (const part of item.parts) {
-    if (item.stage < STAGES) {
+    if (item.stage < item.stages) {
       part.rotation.z += 0.35
-      part.position.x += item.shift?.x ?? 0.12
-      part.position.y += item.shift?.y ?? 0
+      part.position.x += 0.12
     } else {
       knockOff(scene, part)
     }
@@ -241,7 +239,7 @@ export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
   if (!zone) return 'Nose!'
 
   const item = person.items.find((candidate) => candidate.zone === zone)
-  if (!item || item.stage >= STAGES) return BARE_HITS[zone]
+  if (!item || item.stage >= item.stages) return BARE_HITS[zone]
 
   person.struck = true
   damageItem(scene, item)
@@ -251,7 +249,7 @@ export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
 // Test only: take a character down to one last hit
 export function leaveOneHit(scene: THREE.Scene, person: Character) {
   for (const item of person.items) {
-    while (item.stage < STAGES && hitsLeft(person) > 1) damageItem(scene, item)
+    while (item.stage < item.stages && hitsLeft(person) > 1) damageItem(scene, item)
   }
 }
 

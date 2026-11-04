@@ -50,7 +50,7 @@ Work in this order:
 8. Build the character selection screen, with random names and a random computer pick in one-player games.
 
 ## Design decisions so far
-- Items have two stages, askew then gone, with one item lost per flick at most. Falling items are visual-only.
+- Items usually have two stages, with one stage of damage per flick at most. A hat just flies off in one hit. Falling items are visual-only.
 - Play it straight: silence while aiming, a still crowd, a chess clock, captions and annotations like `Qx??`.
 - If greyscale stays, use ivory and ebony for the sides, and dark suits for the crowd.
 - Check the licence on every music recording. Option: multitrack my own solemn choir.
