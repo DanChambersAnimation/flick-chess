@@ -864,6 +864,21 @@ hookButton.addEventListener('click', () => {
   hookButton.textContent = hookDirection === 1 ? 'Hook: right' : 'Hook: left'
 })
 
+// Test only: remove the other side's pieces, so your next flick wins.
+// import.meta.env.DEV is false in the finished game, which hides the button.
+const testingButton = document.querySelector<HTMLButtonElement>('#testing')!
+testingButton.hidden = !import.meta.env.DEV
+
+testingButton.addEventListener('click', () => {
+  if (phase !== 'aiming') return
+  for (const piece of pieces) {
+    if (piece.side === turn) continue
+    piece.out = true
+    piece.mesh.visible = false
+    piece.body.setEnabled(false)
+  }
+})
+
 function getLift(kind: PieceKind) {
   const slider = Number(liftSlider.value)
   if (kind === 'knight') return Math.max(slider, 0.5)

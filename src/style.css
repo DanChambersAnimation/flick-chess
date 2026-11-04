@@ -27,3 +27,11 @@ canvas { display: block; filter: grayscale(1) contrast(1.2); }
   padding: 0 16px;
   font: bold 16px sans-serif;
 }
+#testing {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  min-height: 44px;
+  padding: 0 16px;
+  font: bold 16px sans-serif;
+}
