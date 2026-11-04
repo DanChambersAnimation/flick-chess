@@ -166,9 +166,10 @@ type Point = { x: number; y: number; z: number }
 
 // Decides what a piece hit from how high up the head it landed
 export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
-  const height = (at.y - person.group.position.y) / person.size
+  const centre = person.group.getWorldPosition(new THREE.Vector3())
+  const height = (at.y - centre.y) / person.size
   const facingAway = person.group.rotation.y !== 0
-  const across = ((at.x - person.group.position.x) / person.size) * (facingAway ? -1 : 1)
+  const across = ((at.x - centre.x) / person.size) * (facingAway ? -1 : 1)
 
   burst(scene, at, 0xffffff, 16, 6)
   addShake(0.25)

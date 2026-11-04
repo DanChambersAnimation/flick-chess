@@ -237,18 +237,23 @@ function addPerson(
 const players = new Map<number, Character>()
 
 function addPlayer(z: number, paint: THREE.Material) {
+  // Everything in this group pivots at the player's feet
+  const body = new THREE.Group()
+  body.position.set(0, FLOOR_Y, z)
+  scene.add(body)
+
   const torso = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 2), paint)
-  torso.position.set(0, -1, z)
-  scene.add(torso)
+  torso.position.set(0, 3, 0)
+  body.add(torso)
 
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(2, 3, 1).setTranslation(0, -1, z)
   )
 
   const character = makeCharacter(2)
-  character.group.position.set(0, 3.5, z)
+  character.group.position.set(0, 7.5, 0)
   character.group.rotation.y = z > 0 ? Math.PI : 0
-  scene.add(character.group)
+  body.add(character.group)
 
   const head = world.createCollider(
     RAPIER.ColliderDesc.cylinder(1.5, 1.8)
@@ -257,14 +262,17 @@ function addPlayer(z: number, paint: THREE.Material) {
       .setContactForceEventThreshold(40)
   )
   players.set(head.handle, character)
+
+  return body
 }
 
-addPlayer(7.2, redPaint)
-addPlayer(-7.2, bluePaint)
+const redBody = addPlayer(7.2, redPaint)
+const blueBody = addPlayer(-7.2, bluePaint)
 
+// Shoulders are measured from each player's feet, and start inside the torso
 const arms = {
-  red: makeArm(scene, new THREE.Vector3(2.4, 1.4, 6.4), redPaint, -1),
-  blue: makeArm(scene, new THREE.Vector3(-2.4, 1.4, -6.4), bluePaint, 1),
+  red: makeArm(scene, redBody, new THREE.Vector3(1.7, 5.3, -0.3), redPaint, -1),
+  blue: makeArm(scene, blueBody, new THREE.Vector3(-1.7, 5.3, 0.3), bluePaint, 1),
 }
 
 // 4b-2b. The walls of the room
