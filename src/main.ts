@@ -157,8 +157,8 @@ type PieceKind = keyof typeof PIECE_TYPES
 
 const blueKnightShape = PIECE_TYPES.knight.shape.clone().rotateY(Math.PI)
 
-const redPaint = new THREE.MeshStandardMaterial({ color: 0xd62828, flatShading: true })
-const bluePaint = new THREE.MeshStandardMaterial({ color: 0x1d3557, flatShading: true })
+const redPaint = new THREE.MeshStandardMaterial({ color: 0xf2ead3, flatShading: true })
+const bluePaint = new THREE.MeshStandardMaterial({ color: 0x1c1917, flatShading: true })
 
 // 4b. The invisible physics world
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
@@ -688,10 +688,12 @@ function canFlick(piece: Piece) {
   return hasFlicked[turn] || piece.kind === 'pawn'
 }
 
+const SIDE_NAMES = { red: 'Ivory', blue: 'Ebony' }
+
 function showStatus() {
-  if (phase === 'over') statusLine.textContent = `${winner} wins! Press R`
+  if (phase === 'over') statusLine.textContent = `${SIDE_NAMES[winner!]} wins! Press R`
   else if (phase === 'rolling') statusLine.textContent = '...'
-  else statusLine.textContent = `${turn} to flick`
+  else statusLine.textContent = `${SIDE_NAMES[turn]} to flick`
 }
 
 function startRolling() {
