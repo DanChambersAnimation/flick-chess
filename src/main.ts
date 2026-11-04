@@ -1003,37 +1003,48 @@ window.addEventListener('pointermove', (event) => {
   updateArrow()
 })
 
+// The one way a flick enters the game. It takes plain numbers and touches
+// nothing on screen, so a player, the computer, a replay or the other
+// device can all use it and get the same result.
+function applyFlick(
+  piece: Piece,
+  aim: { x: number; z: number },
+  lift: number,
+  hookSide: number
+) {
+  if (piece.kind === 'queen') {
+    startQueen(piece, aim.x * 4, aim.z * 4)
+    startRolling()
+    return
+  }
+
+  const strength = PIECE_TYPES[piece.kind].maxImpulse / MAX_PULL
+  const length = Math.sqrt(aim.x * aim.x + aim.z * aim.z)
+
+  piece.body.applyImpulse(
+    {
+      x: aim.x * strength,
+      y: length * strength * lift,
+      z: aim.z * strength,
+    },
+    true
+  )
+
+  if (piece.kind === 'knight') {
+    const sideways = (strength * 0.5 * hookSide) / 60
+    hook = { body: piece.body, x: -aim.z * sideways, z: aim.x * sideways }
+  }
+
+  startRolling()
+}
+
 window.addEventListener('pointerup', () => {
   if (!aiming || !selected) return
   stopAiming()
   if (shot.length() <= 0.1) return
   flickArm(activeArm)
   play('thwack')
-
-  if (selected.kind === 'queen') {
-    startQueen(selected, shot.x * 4, shot.z * 4)
-    startRolling()
-    return
-  }
-
-  const type = PIECE_TYPES[selected.kind]
-  const strength = type.maxImpulse / MAX_PULL
-  const lift = getLift(selected.kind)
-
-  selected.body.applyImpulse(
-    {
-      x: shot.x * strength,
-      y: shot.length() * strength * lift,
-      z: shot.z * strength,
-    },
-    true
-  )
-  if (selected.kind === 'knight') {
-    const sideways = (strength * 0.5 * hookDirection) / 60
-    hook = { body: selected.body, x: -shot.z * sideways, z: shot.x * sideways }
-  }
-
-  startRolling()
+  applyFlick(selected, shot, getLift(selected.kind), hookDirection)
 })
 
 window.addEventListener('pointercancel', stopAiming)
