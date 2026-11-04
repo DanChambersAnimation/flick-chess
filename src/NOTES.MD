@@ -17,6 +17,7 @@
 - Anything affecting physics uses fixed patterns, never Math.random or Math.sin.
 - Visual-only effects can use real randomness.
 - Plan: each turn, send only the flick, and both devices simulate it.
+- Before online play: flicks must apply in the fixed physics step, not on pointerup.
 - Hosting plan: Cloudflare Durable Objects. Check current pricing first.
 
 ## Game rules so far

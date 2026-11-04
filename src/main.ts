@@ -112,39 +112,39 @@ function makeKnightShape() {
 
 const PIECE_TYPES = {
   pawn: {
-    height: 0.92, radius: 0.3, density: 1, maxImpulse: 8, liftScale: 1,
+    height: 0.92, radius: 0.3, density: 1, maxImpulse: 8, minLift: 0, maxLift: 0.75,
     shape: makeShape(0.92, [
       [0, 0], [0.32, 0], [0.32, 0.1], [0.14, 0.25], [0.1, 0.5],
       [0.2, 0.56], [0.1, 0.62], [0.2, 0.72], [0.17, 0.86], [0, 0.92],
     ]),
   },
   rook: {
-    height: 0.8, radius: 0.36, density: 6, maxImpulse: 14, liftScale: 0.4,
+    height: 0.8, radius: 0.36, density: 6, maxImpulse: 14, minLift: 0, maxLift: 0.15,
     shape: makeShape(0.8, [
       [0, 0], [0.38, 0], [0.38, 0.12], [0.26, 0.2],
       [0.24, 0.6], [0.34, 0.66], [0.34, 0.8], [0, 0.8],
     ]),
   },
   knight: {
-    height: 1.1, radius: 0.32, density: 3, maxImpulse: 16, liftScale: 1,
+    height: 1.1, radius: 0.32, density: 3, maxImpulse: 16, minLift: 0.5, maxLift: 0.75,
     shape: makeKnightShape(),
   },
   bishop: {
-    height: 1.25, radius: 0.3, density: 3, maxImpulse: 16, liftScale: 1,
+    height: 1.25, radius: 0.3, density: 3, maxImpulse: 16, minLift: 0, maxLift: 0.75,
     shape: makeShape(1.25, [
       [0, 0], [0.32, 0], [0.32, 0.1], [0.14, 0.3], [0.1, 0.75],
       [0.22, 0.82], [0.1, 0.9], [0.17, 1.05], [0.06, 1.2], [0, 1.25],
     ]),
   },
   queen: {
-    height: 1.45, radius: 0.33, density: 6, maxImpulse: 30, liftScale: 1,
+    height: 1.45, radius: 0.33, density: 6, maxImpulse: 30, minLift: 0, maxLift: 0,
     shape: makeShape(1.45, [
       [0, 0], [0.35, 0], [0.35, 0.12], [0.15, 0.35], [0.1, 0.95],
       [0.25, 1.05], [0.12, 1.13], [0.26, 1.3], [0.2, 1.38], [0, 1.45],
     ]),
   },
   king: {
-    height: 1.6, radius: 0.33, density: 5, maxImpulse: 8, liftScale: 0.5,
+    height: 1.6, radius: 0.33, density: 5, maxImpulse: 8, minLift: 0, maxLift: 0.35,
     shape: makeShape(1.6, [
       [0, 0], [0.35, 0], [0.35, 0.12], [0.15, 0.35], [0.11, 1.05],
       [0.24, 1.14], [0.12, 1.22], [0.2, 1.4], [0.06, 1.48], [0.06, 1.6], [0, 1.6],
@@ -761,6 +761,7 @@ function endTurn() {
     phase = 'aiming'
   }
 
+  resetLiftSlider()
   if (phase === 'over') {
     play('winFanfare')
     play('cheer')
@@ -791,6 +792,8 @@ function afterStep() {
 
 function resetGame() {
   play('fanfare')
+  if (aiming) stopAiming()
+  resetLiftSlider()
   if (queenRun) {
     queenRun.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
     queenRun = null
@@ -922,11 +925,29 @@ testingButton.addEventListener('click', () => {
 })
 
 function getLift(kind: PieceKind) {
-  const slider = Number(liftSlider.value)
-  if (kind === 'knight') return Math.max(slider, 0.5)
-  if (kind === 'queen') return 0
-  return slider * PIECE_TYPES[kind].liftScale
+  const type = PIECE_TYPES[kind]
+  return Math.min(Math.max(Number(liftSlider.value), type.minLift), type.maxLift)
 }
+
+// Grey out what this piece can't use, and move the slider into the allowed part
+function fitLiftSlider(kind: PieceKind) {
+  const type = PIECE_TYPES[kind]
+  const top = Number(liftSlider.max)
+  liftSlider.style.setProperty('--low', String(type.minLift / top))
+  liftSlider.style.setProperty('--high', String(type.maxLift / top))
+  liftSlider.value = String(getLift(kind))
+}
+
+function resetLiftSlider() {
+  selected = null
+  liftSlider.style.setProperty('--low', '0')
+  liftSlider.style.setProperty('--high', '1')
+  liftSlider.value = '0'
+}
+
+liftSlider.addEventListener('input', () => {
+  if (selected) liftSlider.value = String(getLift(selected.kind))
+})
 
 function pointOnBoard(event: PointerEvent) {
   const box = renderer.domElement.getBoundingClientRect()
@@ -982,6 +1003,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
 
   if (touched && canFlick(touched)) {
     selected = touched
+    fitLiftSlider(touched.kind)
     aiming = true
     controls.enabled = false
     shot.set(0, 0, 0)
