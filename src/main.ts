@@ -7,6 +7,7 @@ import { burst, addShake, updateEffects, clearBits } from './effects'
 import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
 import { makeArm, startReach, setAim, restArm, flickArm, updateArms, type Arm } from './arm'
 import { makeCrowd, updateCrowd, excite, type SpectatorPlan } from './crowd'
+import { startAudio, play, type SoundName } from './sound'
 
 await RAPIER.init()
 
@@ -283,38 +284,46 @@ function addStand(x: number, z: number, sizeX: number, sizeZ: number) {
 
 const spectators: SpectatorPlan[] = []
 
+// Looks random, but it's a fixed pattern so every device matches
+const BODY_HEIGHTS = [0.75, 1, 1.3]
+
 function addSpectator(x: number, z: number, sideways: boolean) {
-  const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
+  const n = spectatorCount
+  const color = SHIRT_COLOURS[n % SHIRT_COLOURS.length]
+  const bodyHeight = BODY_HEIGHTS[(n * 2 + Math.floor(n / 3)) % 3]
+  const headType = (n + Math.floor(n / 4)) % 3
   spectatorCount++
 
   const size = AUDIENCE_SIZE
   const feetY = FLOOR_Y + 2
   const width = sideways ? size : 2 * size
   const depth = sideways ? 2 * size : size
+  const torsoHeight = 3 * size * bodyHeight
 
   world.createCollider(
-    RAPIER.ColliderDesc.cuboid(width / 2, 1.5 * size, depth / 2)
-      .setTranslation(x, feetY + 1.5 * size, z)
+    RAPIER.ColliderDesc.cuboid(width / 2, torsoHeight / 2, depth / 2)
+      .setTranslation(x, feetY + torsoHeight / 2, z)
   )
   world.createCollider(
-    RAPIER.ColliderDesc.ball(0.9 * size).setTranslation(x, feetY + 3.9 * size, z)
+    RAPIER.ColliderDesc.ball(0.9 * size)
+      .setTranslation(x, feetY + torsoHeight + 0.9 * size, z)
   )
 
   let bodyYaw = z > 0 ? Math.PI : 0
   if (sideways) bodyYaw = x > 0 ? -Math.PI / 2 : Math.PI / 2
 
-  spectators.push({ x, z, feetY, size, bodyYaw, color })
+  spectators.push({ x, z, feetY, size, bodyYaw, color, bodyHeight, headType })
 }
 
-for (const sideX of [-1, 1]) {
-  for (const sideZ of [-1, 1]) {
-    addStand(sideX * 14.75, sideZ * 22, 19.5, 5)
-    addStand(sideX * 22, sideZ * 13.75, 5, 11.5)
+   for (const sideX of [-1, 1]) {
+     for (const sideZ of [-1, 1]) {
+       addStand(sideX * 14.75, sideZ * 22, 19.5, 5)
+       addStand(sideX * 22, sideZ * 13.75, 5, 11.5)
 
-    for (const x of [6, 10, 14, 18, 22]) addSpectator(sideX * x, sideZ * 22, false)
-    for (const z of [18, 14, 10]) addSpectator(sideX * 22, sideZ * z, true)
-  }
-}
+       for (const x of [6, 10, 14, 18, 22]) addSpectator(sideX * x, sideZ * 22, false)
+       for (const z of [18, 14, 10]) addSpectator(sideX * 22, sideZ * z, true)
+     }
+   }
 
 const crowd = makeCrowd(scene, spectators)
 
@@ -413,6 +422,17 @@ function smash(item: Breakable) {
   burst(scene, item.mesh.position, item.color, 24, 5)
   addShake(0.1)
   excite(crowd, 0.6)
+  play('crash')
+}
+
+const HIT_SOUNDS: Record<string, SoundName> = {
+  'Hat!': 'clonk',
+  'Bonk!': 'clonk',
+  'Gums!': 'clonk',
+  'Glasses!': 'highCrash',
+  'Tooth!': 'highCrash',
+  'Nose!': 'honk',
+  'Right in the eye!': 'squelch',
 }
 
 function handleImpacts() {
@@ -431,7 +451,9 @@ function handleImpacts() {
     if (person) {
       const pieceHandle = players.has(handle1) ? handle2 : handle1
       const at = world.getCollider(pieceHandle).translation()
-      statusLine.textContent = hitCharacter(scene, person, at)
+      const result = hitCharacter(scene, person, at)
+      statusLine.textContent = result
+      play(HIT_SOUNDS[result])
       excite(crowd, 1)
       return
     }
@@ -450,6 +472,7 @@ function handleImpacts() {
     burst(scene, at, 0xffb703, Math.round(6 * size), 3 + size)
     addShake(0.02 * size)
     excite(crowd, 0.1 * size)
+    play('click', size / 4)
   })
 }
 
@@ -627,6 +650,10 @@ function startRolling() {
   phase = 'rolling'
   rollingSteps = 0
   hasFlicked[turn] = true
+  if (phase === 'over') {
+    play('winFanfare')
+    play('cheer')
+  }
   showStatus()
 }
 
@@ -676,6 +703,7 @@ function afterStep() {
 }
 
 function resetGame() {
+  play('fanfare')
   if (queenRun) {
     queenRun.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
     queenRun = null
@@ -740,6 +768,17 @@ function findFocus() {
   }
   return fastest
 }
+
+// 4g. Sound can only begin after the first click or tap
+let gameStarted = false
+
+window.addEventListener('pointerdown', () => {
+  startAudio()
+  if (!gameStarted) {
+    gameStarted = true
+    play('fanfare')
+  }
+}, { capture: true })
 
 // 5. Drag to orbit, pinch or scroll to zoom
 const controls = new OrbitControls(camera, renderer.domElement)
@@ -861,6 +900,7 @@ window.addEventListener('pointerup', () => {
   stopAiming()
   if (shot.length() <= 0.1) return
   flickArm(activeArm)
+  play('thwack')
 
   if (selected.kind === 'queen') {
     startQueen(selected, shot.x * 4, shot.z * 4)

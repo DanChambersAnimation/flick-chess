@@ -7,9 +7,12 @@ export type SpectatorPlan = {
   size: number
   bodyYaw: number
   color: number
+  bodyHeight: number
+  headType: number
 }
 
 type Spectator = SpectatorPlan & {
+  headSlot: number
   yaw: number
   headSpeed: number
   jump: number
@@ -19,7 +22,7 @@ type Spectator = SpectatorPlan & {
 export type Crowd = {
   people: Spectator[]
   torsos: THREE.InstancedMesh
-  heads: THREE.InstancedMesh
+  heads: THREE.InstancedMesh[]
   eyes: THREE.InstancedMesh
   pupils: THREE.InstancedMesh
   excitement: number
@@ -30,6 +33,12 @@ const EYE_Y = 0.2
 const EYE_Z = 0.86
 const MAX_HEAD_TURN = 1.1
 const MAX_GLANCE = 0.12
+
+const HEAD_SHAPES = [
+  new THREE.IcosahedronGeometry(0.9, 1),
+  new THREE.CylinderGeometry(0.9, 0.9, 1.6, 8, 1, false, Math.PI / 8),
+  new THREE.BoxGeometry(1.6, 1.7, 1.6),
+]
 
 function makeInstances(
   scene: THREE.Scene,
@@ -54,18 +63,6 @@ export function makeCrowd(scene: THREE.Scene, plans: SpectatorPlan[]): Crowd {
     count
   )
 
-  const heads = makeInstances(
-    scene,
-    new THREE.IcosahedronGeometry(0.9, 1),
-    new THREE.MeshStandardMaterial({
-      color: 0xf2c9a0,
-      flatShading: true,
-      emissive: 0xf2c9a0,
-      emissiveIntensity: 0.15,
-    }),
-    count
-  )
-
   const eyes = makeInstances(
     scene,
     new THREE.CircleGeometry(0.22, 8),
@@ -80,13 +77,28 @@ export function makeCrowd(scene: THREE.Scene, plans: SpectatorPlan[]): Crowd {
     count * 2
   )
 
+  // Each head shape gets its own set of instances
+  const headCounts = HEAD_SHAPES.map(() => 0)
+
   const people = plans.map((plan) => ({
     ...plan,
+    headSlot: headCounts[plan.headType]++,
     yaw: plan.bodyYaw,
     headSpeed: 3 + Math.random() * 3,
     jump: 0,
     jumpSpeed: 0,
   }))
+
+  const headPaint = new THREE.MeshStandardMaterial({
+    color: 0xf2c9a0,
+    flatShading: true,
+    emissive: 0xf2c9a0,
+    emissiveIntensity: 0.15,
+  })
+
+  const heads = HEAD_SHAPES.map((shape, type) =>
+    makeInstances(scene, shape, headPaint, headCounts[type])
+  )
 
   const color = new THREE.Color()
   people.forEach((person, i) => torsos.setColorAt(i, color.set(person.color)))
@@ -138,17 +150,19 @@ export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number)
     const glance = clamp(wrapAngle(toFocus - person.yaw) * turn * 6, MAX_GLANCE)
 
     const baseY = person.feetY + person.jump
+    const torsoHeight = 3 * person.size * person.bodyHeight
 
-    part.position.set(person.x, baseY + 1.5 * person.size, person.z)
+    part.position.set(person.x, baseY + torsoHeight / 2, person.z)
     part.rotation.set(0, person.bodyYaw, 0)
-    part.scale.setScalar(person.size)
+    part.scale.set(person.size, person.size * person.bodyHeight, person.size)
     part.updateMatrix()
     crowd.torsos.setMatrixAt(i, part.matrix)
 
-    part.position.set(person.x, baseY + 3.9 * person.size, person.z)
+    part.position.set(person.x, baseY + torsoHeight + 0.9 * person.size, person.z)
     part.rotation.set(0, person.yaw, 0)
+    part.scale.setScalar(person.size)
     part.updateMatrix()
-    crowd.heads.setMatrixAt(i, part.matrix)
+    crowd.heads[person.headType].setMatrixAt(person.headSlot, part.matrix)
     faceMatrix.copy(part.matrix)
 
     for (const [eye, side] of [[0, -1], [1, 1]]) {
@@ -163,7 +177,7 @@ export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number)
   })
 
   crowd.torsos.instanceMatrix.needsUpdate = true
-  crowd.heads.instanceMatrix.needsUpdate = true
   crowd.eyes.instanceMatrix.needsUpdate = true
   crowd.pupils.instanceMatrix.needsUpdate = true
+  for (const heads of crowd.heads) heads.instanceMatrix.needsUpdate = true
 }
