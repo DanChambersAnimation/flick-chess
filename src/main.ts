@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
-import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
+import { makeCharacter, hitCharacter, hitsLeft, newFlick, leaveOneHit, resetCharacter, type Character } from './character'
 import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, type Arm } from './arm'
 import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
 import { makeCrowd, updateCrowd, excite, knockSpectator, resetCrowd, type SpectatorPlan } from './crowd'
@@ -202,6 +202,8 @@ world.createCollider(
 )
 
 const players = new Map<number, Character>()
+const HEAD_Y = 3.5
+const HEAD_Z = { red: 7.2, blue: -7.2 }
 
 const bodyHits = new Map<number, { wobble: Wobble; side: Side; z: number }>()
 const wobbles: Wobble[] = []
@@ -235,7 +237,7 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
   parent.add(neck)
   parts.push(neck)
 
-  const character = makeCharacter(2)
+  const character = makeCharacter(2, HEAD_Y)
   character.group.position.y = 1.5
   character.group.rotation.y = z > 0 ? Math.PI : 0
   neck.add(character.group)
@@ -249,7 +251,7 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
 
   const headCollider = world.createCollider(
     RAPIER.ColliderDesc.cylinder(1.5, 1.8)
-      .setTranslation(0, 3.5, z)
+      .setTranslation(0, HEAD_Y, z)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(40)
   )
@@ -261,11 +263,12 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
   bodyHits.set(headCollider.handle, { wobble, side, z })
   bodyHits.set(torsoCollider.handle, { wobble, side, z })
 
-  return { body, top: parent }
+  return { body, top: parent, character }
 }
 
-const red = addPlayer(7.2, redPaint, 'red')
-const blue = addPlayer(-7.2, bluePaint, 'blue')
+const red = addPlayer(HEAD_Z.red, redPaint, 'red')
+const blue = addPlayer(HEAD_Z.blue, bluePaint, 'blue')
+const characters = { red: red.character, blue: blue.character }
 
 // Shoulders are measured from each player's feet, and start inside the torso
 const arms = {
@@ -502,7 +505,7 @@ const HIT_SOUNDS: Record<string, SoundName> = {
   'Bonk!': 'clonk',
   'Gums!': 'clonk',
   'Glasses!': 'highCrash',
-  'Tooth!': 'highCrash',
+  'Teeth!': 'highCrash',
   'Nose!': 'honk',
   'Right in the eye!': 'squelch',
 }
@@ -531,9 +534,11 @@ function handleImpacts() {
       const pieceHandle = players.has(handle1) ? handle2 : handle1
       const at = world.getCollider(pieceHandle).translation()
       const result = hitCharacter(scene, person, at)
-      statusLine.textContent = result
       shakePlayer(players.has(handle1) ? handle1 : handle2, at, 1)
-      play(HIT_SOUNDS[result])
+      if (result) {
+        statusLine.textContent = result
+        play(HIT_SOUNDS[result])
+      }
       excite(crowd, 1)
       return
     }
@@ -660,13 +665,14 @@ const statusLine = document.querySelector<HTMLDivElement>('#status')!
 const captionLine = document.querySelector<HTMLDivElement>('#caption')!
 
 // A snapshot taken at each flick, so the end of the turn can see what changed
-const atFlick = { red: 0, blue: 0, kings: 0, opening: false }
+const atFlick = { red: 0, blue: 0, kings: 0, hits: 0, opening: false }
 let queenWrapped = false
 
 // Online, the host will choose this seed and send it to both devices
 resetCommentary(Math.floor(Math.random() * 1000))
 
 let hook: { body: RAPIER.RigidBody; x: number; z: number } | null = null
+let flicked: Piece | null = null
 let queenRun: {
   piece: Piece
   x: number
@@ -752,12 +758,23 @@ function countKings() {
   return pieces.filter((p) => p.kind === 'king' && isPlayable(p)).length
 }
 
+function countHitsLeft() {
+  return hitsLeft(characters.red) + hitsLeft(characters.blue)
+}
+
+// Out of pieces or out of items, either way the game is up
+function isBeaten(side: Side) {
+  return !hasPlayablePiece(side) || hitsLeft(characters[side]) === 0
+}
+
 // One flick gets one caption, so the order here sets which event wins
 function readTurn(flicker: Side, other: Side): CommentEvent | null {
   const ownLost = atFlick[flicker] - countPlayable(flicker)
   const otherLost = atFlick[other] - countPlayable(other)
 
+  if (hitsLeft(characters.red) === 0 || hitsLeft(characters.blue) === 0) return 'forfeit'
   if (countKings() < atFlick.kings) return 'kingHit'
+  if (countHitsLeft() < atFlick.hits) return 'itemHit'
   if (ownLost > otherLost) return 'ownGoal'
   if (otherLost >= 3) return 'wipeout'
   if (queenWrapped) return 'queenWrap'
@@ -770,6 +787,9 @@ function startRolling() {
   atFlick.red = countPlayable('red')
   atFlick.blue = countPlayable('blue')
   atFlick.kings = countKings()
+  atFlick.hits = countHitsLeft()
+  newFlick(characters.red)
+  newFlick(characters.blue)
   atFlick.opening = !hasFlicked.red && !hasFlicked.blue
   queenWrapped = false
   captionLine.textContent = ''
@@ -782,6 +802,7 @@ function startRolling() {
 
 function endTurn() {
   hook = null
+  flicked = null
   for (const piece of pieces) {
     const position = piece.body.translation()
     if (Math.abs(position.x) > 4 || Math.abs(position.z) > 4) piece.out = true
@@ -792,10 +813,10 @@ function endTurn() {
   const other: Side = flicker === 'red' ? 'blue' : 'red'
   captionLine.textContent = comment(readTurn(flicker, other))
 
-  if (!hasPlayablePiece(flicker)) {
+  if (isBeaten(flicker)) {
     winner = other
     phase = 'over'
-  } else if (!hasPlayablePiece(other)) {
+  } else if (isBeaten(other)) {
     winner = flicker
     phase = 'over'
   } else {
@@ -838,6 +859,7 @@ function resetGame() {
   resetCommentary(Math.floor(Math.random() * 1000))
   if (aiming || settingLift) stopAiming()
   resetLiftSlider()
+  flicked = null
   if (queenRun) {
     queenRun.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
     queenRun = null
@@ -968,6 +990,15 @@ testingButton.addEventListener('click', () => {
     piece.mesh.visible = false
     piece.body.setEnabled(false)
   }
+})
+
+// Test only: leave the other side one hit from forfeiting
+const lastItemButton = document.querySelector<HTMLButtonElement>('#last-item')!
+lastItemButton.hidden = !import.meta.env.DEV
+
+lastItemButton.addEventListener('click', () => {
+  if (phase !== 'aiming') return
+  leaveOneHit(scene, characters[turn === 'red' ? 'blue' : 'red'])
 })
 
 function getLift(kind: PieceKind) {
@@ -1123,6 +1154,8 @@ function applyFlick(
   lift: number,
   hookSide: number
 ) {
+  flicked = piece
+
   if (piece.kind === 'queen') {
     startQueen(piece, aim.x * 4, aim.z * 4)
     startRolling()
@@ -1180,14 +1213,57 @@ function fitToWindow() {
 window.addEventListener('resize', fitToWindow)
 fitToWindow()
 
+// 6b. Slow motion. It only changes how fast the fixed physics steps are spent,
+// never what happens in them, so every device still gets the same result.
+const SLOW_MOTION = 0.2
+const SLOW_WARNING = 0.25 // Seconds before arrival that the slowdown begins
+const HEAD_WIDTH = 2.5
+const HEAD_RADIUS = 2.2 // The head, plus a bit for the size of the piece
+let timeScale = 1
+
+// Is this piece about to reach the head at this end of the room?
+// arrival is the time to reach the head's middle. Its face comes sooner.
+function isHeadingFor(piece: Piece, headZ: number) {
+  const p = piece.body.translation()
+  const v = piece.body.linvel()
+  const speed = v.x * v.x + v.z * v.z
+  if (speed < 4) return false
+
+  const arrival = (-p.x * v.x + (headZ - p.z) * v.z) / speed
+  const toFace = arrival - HEAD_RADIUS / Math.sqrt(speed)
+  if (arrival <= 0 || toFace > SLOW_WARNING) return false
+
+  const missX = p.x + v.x * arrival
+  const missZ = p.z + v.z * arrival - headZ
+  const faceTime = Math.max(toFace, 0)
+  const height = p.y + v.y * faceTime - 4.9 * faceTime * faceTime
+
+  return missX * missX + missZ * missZ < HEAD_WIDTH * HEAD_WIDTH && height > 1.5 && height < 5.5
+}
+
+// Slow down only for a shot that could end the game this instant
+function isDecidingShot() {
+  if (!flicked) return false
+
+  for (const side of ['red', 'blue'] as const) {
+    const person = characters[side]
+    if (hitsLeft(person) === 1 && !person.struck && isHeadingFor(flicked, HEAD_Z[side])) return true
+  }
+  return false
+}
+
 // 7. The game loop: runs once per screen refresh, forever
 let lastTime = 0
 let unspentTime = 0
 
 renderer.setAnimationLoop((time) => {
   // How long since the last frame? Capped so a paused tab can't jump.
-  const elapsed = Math.min((time - lastTime) / 1000, 0.25)
+  const realElapsed = Math.min((time - lastTime) / 1000, 0.25)
   lastTime = time
+
+  const wantedScale = isDecidingShot() ? SLOW_MOTION : 1
+  timeScale += (wantedScale - timeScale) * Math.min(realElapsed * 12, 1)
+  const elapsed = realElapsed * timeScale
   unspentTime += elapsed
 
   // Run as many fixed physics steps as that time pays for

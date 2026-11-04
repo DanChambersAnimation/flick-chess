@@ -99,3 +99,11 @@ canvas { display: block; filter: grayscale(1) contrast(1.2); }
 #caption:empty {
   display: none;
 }
+#last-item {
+  position: fixed;
+  bottom: 72px;
+  right: 16px;
+  min-height: 44px;
+  padding: 0 16px;
+  font: bold 16px sans-serif;
+}

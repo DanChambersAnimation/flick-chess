@@ -43,7 +43,7 @@ Work in this order:
 1. Test `grayscale(1) contrast(1.2)` on the canvas. Move the win fanfare from startRolling() to endTurn().
 2. Move the flick out of pointerup into applyFlick(), taking piece, shot, lift and hook. The computer player, opening test, replays and online play will all use it.
 3. Add commentary as text captions, tagged by event: opening, wipeout, own goal, near miss, king hit, queen wrap. Use a shared seed online.
-4. Decide what damage does. Idea: losing all three items means forfeiting the game.
+4. Done: each character has three items with two stages. Losing all three forfeits at the end of the turn. Slow motion plays on the approach when someone is one hit from forfeiting.
 5. Take one Blender head all the way through, with three named breakables.
 6. Build a kit of heads, hair, facial hair and accessories, including female characters.
 7. Add the computer opponent using Rapier snapshots, then the opening test and balancing.
@@ -55,6 +55,18 @@ Work in this order:
 - If greyscale stays, use ivory and ebony for the sides, and dark suits for the crowd.
 - Check the licence on every music recording. Option: multitrack my own solemn choir.
 - Women's Russian surnames change, e.g. Kosminsky becomes Kosminskaya.
+
+## Characters
+Each has three items. Every item needs a name, a hit zone and a way of showing its two stages.
+- Countess: tiara, eyepatch, earrings.
+- Russian: small dark glasses, epaulettes, medals.
+- American: horn-rimmed glasses, pipe, tie clip.
+- Duffer: monocle, brooch, cigarette holder.
+- German fraulein: pearl necklace, hair grip, pince-nez.
+
+Stage ideas: pairs lose one then the other, medals lose half, a pipe droops, a monocle dangles on its cord, an eyepatch slips to reveal a good eye.
+
+Body items need a chest hit zone that still takes some lift, or flat flicks will make them too easy.
 
 ## Also to do
 - Swap the camera for each player in pass-and-play.

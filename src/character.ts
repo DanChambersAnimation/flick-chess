@@ -9,14 +9,28 @@ type SavedPart = {
   scale: THREE.Vector3
 }
 
+export type HitZone = 'top' | 'eyes' | 'mouth'
+
+// askew: tips over, then flies off. half: loses half its parts, then the rest.
+type ItemStyle = 'askew' | 'half'
+
+export type Item = {
+  name: string
+  zone: HitZone
+  style: ItemStyle
+  parts: THREE.Object3D[]
+  stage: number // 0 is untouched, 1 is damaged, 2 is gone
+}
+
+const STAGES = 2
+
 export type Character = {
   group: THREE.Group
-  mouth: THREE.Group
-  teeth: THREE.Mesh[]
-  glasses: THREE.Group
-  hat: THREE.Group
+  items: Item[]
   size: number
-  knockedOff: SavedPart[]
+  centreY: number // The head's height in the physics world, which never wobbles
+  struck: boolean // Has this character already taken damage this flick?
+  saved: SavedPart[]
 }
 
 function paint(color: number) {
@@ -41,7 +55,7 @@ function roundedRectangle(width: number, height: number, corner: number) {
 }
 
 // Built at size 1, facing +z, centred on the middle of the head
-export function makeCharacter(size: number) {
+export function makeCharacter(size: number, centreY: number): Character {
   const group = new THREE.Group()
   group.scale.setScalar(size)
 
@@ -136,22 +150,37 @@ export function makeCharacter(size: number) {
   band.position.y = 0.11
   hat.add(band)
 
-  return { group, mouth, teeth, glasses, hat, size, knockedOff: [] } as Character
+  const items: Item[] = [
+    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stage: 0 },
+    { name: 'Glasses', zone: 'eyes', style: 'askew', parts: [glasses], stage: 0 },
+    { name: 'Teeth', zone: 'mouth', style: 'half', parts: teeth, stage: 0 },
+  ]
+
+  // Remember where everything belongs, ready for a new game
+  const saved = items.flatMap((item) =>
+    item.parts.map((object) => ({
+      object,
+      parent: object.parent!,
+      position: object.position.clone(),
+      quaternion: object.quaternion.clone(),
+      scale: object.scale.clone(),
+    }))
+  )
+
+  return { group, items, size, centreY, struck: false, saved }
 }
 
-function isAttached(person: Character, object: THREE.Object3D) {
-  return !person.knockedOff.some((part) => part.object === object)
+// How many more hits this character can take before they forfeit
+export function hitsLeft(person: Character) {
+  return person.items.reduce((total, item) => total + STAGES - item.stage, 0)
 }
 
-function knockOff(scene: THREE.Scene, person: Character, object: THREE.Object3D) {
-  person.knockedOff.push({
-    object,
-    parent: object.parent!,
-    position: object.position.clone(),
-    quaternion: object.quaternion.clone(),
-    scale: object.scale.clone(),
-  })
+export function newFlick(person: Character) {
+  person.struck = false
+}
 
+// Falling items are visual only, so real randomness is fine here
+function knockOff(scene: THREE.Scene, object: THREE.Object3D) {
   scene.attach(object)
 
   const velocity = new THREE.Vector3(
@@ -162,63 +191,75 @@ function knockOff(scene: THREE.Scene, person: Character, object: THREE.Object3D)
   throwPart(object, velocity, 2.5)
 }
 
+function damageItem(scene: THREE.Scene, item: Item) {
+  item.stage++
+
+  if (item.style === 'half') {
+    const half = Math.ceil(item.parts.length / 2)
+    const going = item.stage === 1 ? item.parts.slice(0, half) : item.parts.slice(half)
+    for (const part of going) knockOff(scene, part)
+    return
+  }
+
+  for (const part of item.parts) {
+    if (item.stage < STAGES) {
+      part.rotation.z += 0.35
+      part.position.x += 0.12
+    } else {
+      knockOff(scene, part)
+    }
+  }
+}
+
 type Point = { x: number; y: number; z: number }
 
-// Decides what a piece hit from how high up the head it landed
-export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
-  const centre = person.group.getWorldPosition(new THREE.Vector3())
-  const height = (at.y - centre.y) / person.size
-  const facingAway = person.group.rotation.y !== 0
-  const across = ((at.x - centre.x) / person.size) * (facingAway ? -1 : 1)
+// Height decides which item was hit. This uses the fixed head height, not the
+// wobbling model, because damage can end the game and every device must agree.
+function findZone(height: number): HitZone | null {
+  if (height > 0.55) return 'top'
+  if (height > 0.2) return 'eyes'
+  if (height > -0.1) return null // The nose has nothing to lose
+  return 'mouth'
+}
 
+const BARE_HITS: Record<HitZone, string> = {
+  top: 'Bonk!',
+  eyes: 'Right in the eye!',
+  mouth: 'Gums!',
+}
+
+export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
   burst(scene, at, 0xffffff, 16, 6)
   addShake(0.25)
 
-  if (height > 0.55) {
-    if (isAttached(person, person.hat)) {
-      knockOff(scene, person, person.hat)
-      return 'Hat!'
-    }
-    return 'Bonk!'
+  // One call-out per flick, so a rebound can't talk over the damage
+  if (person.struck) return null
+
+  const zone = findZone((at.y - person.centreY) / person.size)
+  if (!zone) return 'Nose!'
+
+  const item = person.items.find((candidate) => candidate.zone === zone)
+  if (!item || item.stage >= STAGES) return BARE_HITS[zone]
+
+  person.struck = true
+  damageItem(scene, item)
+  return `${item.name}!`
+}
+
+// Test only: take a character down to one last hit
+export function leaveOneHit(scene: THREE.Scene, person: Character) {
+  for (const item of person.items) {
+    while (item.stage < STAGES && hitsLeft(person) > 1) damageItem(scene, item)
   }
-
-  if (height > 0.2) {
-    if (isAttached(person, person.glasses)) {
-      knockOff(scene, person, person.glasses)
-      return 'Glasses!'
-    }
-    return 'Right in the eye!'
-  }
-
-  if (height > -0.1) return 'Nose!'
-
-  const teethLeft = person.teeth.filter((tooth) => isAttached(person, tooth))
-  if (teethLeft.length === 0) return 'Gums!'
-
-  const mouthHeight = height + 0.35
-  let nearest = teethLeft[0]
-  let nearestGap = Infinity
-
-  for (const tooth of teethLeft) {
-    const dx = tooth.position.x - across
-    const dy = tooth.position.y - mouthHeight
-    const gap = dx * dx + dy * dy
-    if (gap < nearestGap) {
-      nearest = tooth
-      nearestGap = gap
-    }
-  }
-
-  knockOff(scene, person, nearest)
-  return 'Tooth!'
 }
 
 export function resetCharacter(person: Character) {
-  for (const part of person.knockedOff) {
+  for (const part of person.saved) {
     part.parent.add(part.object)
     part.object.position.copy(part.position)
     part.object.quaternion.copy(part.quaternion)
     part.object.scale.copy(part.scale)
   }
-  person.knockedOff.length = 0
+  for (const item of person.items) item.stage = 0
+  person.struck = false
 }

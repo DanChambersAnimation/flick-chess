@@ -7,8 +7,22 @@ export type CommentEvent =
   | 'nearMiss'
   | 'kingHit'
   | 'queenWrap'
+  | 'itemHit'
+  | 'forfeit'
 
 const LINES: Record<CommentEvent, string[]> = {
+  itemHit: [
+    'A sacrifice of material for an attack on the person.',
+    'Strictly speaking, that is not the board.',
+    'Not in the opening books. Not in any books.',
+    'The arbiter has been notified.',
+  ],
+  forfeit: [
+    'The player is no longer presentable. Forfeit.',
+    'Resigns, in the physical sense.',
+    'Forfeit. The rules are clear on this, as they are on very little else.',
+    'The game is abandoned. The hall will be cleared in an orderly fashion.',
+  ],
   opening: [
     "That reminds me of Sierpinsky's Spanish opening in Prague, 1957.",
     'The Kosminsky Gambit. It has never once been sound.',
