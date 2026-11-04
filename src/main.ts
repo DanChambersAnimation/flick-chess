@@ -35,9 +35,15 @@ scene.add(tableLight)
 
 for (const [side, color] of [[1, 0xff4040], [-1, 0x4080ff]]) {
   const endLight = new THREE.SpotLight(color, 300, 30, Math.PI / 4, 0.6, 2)
-  endLight.position.set(0, 12, side * 12)
-  endLight.target.position.set(0, 2, side * 19)
+  endLight.position.set(0, 16, side * 20)
+  endLight.target.position.set(0, 9, side * 29)
   scene.add(endLight, endLight.target)
+
+  // Gentle fill: high up on the table side, angled down at the player's face
+  const fillLight = new THREE.SpotLight(0xfff4e6, 250, 30, Math.PI / 8, 0.6, 2)
+  fillLight.position.set(0, 14, side * -1.8)
+  fillLight.target.position.set(0, 3.5, side * 7.2)
+  scene.add(fillLight, fillLight.target)
 }
 
 // 3. The board: 64 boxes sharing one shape
@@ -189,13 +195,16 @@ function addPerson(
   feetY: number,
   z: number,
   size: number,
-  paint: THREE.Material
+  paint: THREE.Material,
+  sideways: boolean
 ) {
   const bodyY = feetY + 1.5 * size
   const headY = feetY + 3.9 * size
   const headSize = 0.9 * size
+  const width = sideways ? size : 2 * size
+  const depth = sideways ? 2 * size : size
 
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(2 * size, 3 * size, size), paint)
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(width, 3 * size, depth), paint)
   torso.position.set(x, bodyY, z)
   scene.add(torso)
 
@@ -204,7 +213,7 @@ function addPerson(
   scene.add(face)
 
   world.createCollider(
-    RAPIER.ColliderDesc.cuboid(size, 1.5 * size, size / 2).setTranslation(x, bodyY, z)
+    RAPIER.ColliderDesc.cuboid(width / 2, 1.5 * size, depth / 2).setTranslation(x, bodyY, z)
   )
   world.createCollider(
     RAPIER.ColliderDesc.ball(headSize).setTranslation(x, headY, z)
@@ -239,27 +248,54 @@ function addPlayer(z: number, paint: THREE.Material) {
 addPlayer(7.2, redPaint)
 addPlayer(-7.2, bluePaint)
 
-// 4b-2b. Spectators on a low stand behind each player
+// 4b-2b. The walls of the room
+const wallPaint = new THREE.MeshStandardMaterial({ color: 0x1f2430 })
+
+function addWall(x: number, z: number, sizeX: number, sizeZ: number) {
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(sizeX, 24, sizeZ), wallPaint)
+  wall.position.set(x, FLOOR_Y + 12, z)
+  scene.add(wall)
+
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(sizeX / 2, 12, sizeZ / 2).setTranslation(x, FLOOR_Y + 12, z)
+  )
+}
+
+addWall(0, 30.5, 62, 1)
+addWall(0, -30.5, 62, 1)
+addWall(30.5, 0, 1, 62)
+addWall(-30.5, 0, 1, 62)
+
+// 4b-2c. The audience: an L round each corner, with a gap behind each player
 const standPaint = new THREE.MeshStandardMaterial({ color: 0x3a3440 })
 const SHIRT_COLOURS = [0x2a9d8f, 0xe9c46a, 0xf4a261, 0x8ecae6, 0xb5838d]
+const AUDIENCE_SIZE = 1.6
 let spectatorCount = 0
 
-for (const side of [-1, 1]) {
-  const z = side * 12
-
-  const stand = new THREE.Mesh(new THREE.BoxGeometry(32, 2, 3), standPaint)
-  stand.position.set(0, FLOOR_Y + 1, z)
+function addStand(x: number, z: number, sizeX: number, sizeZ: number) {
+  const stand = new THREE.Mesh(new THREE.BoxGeometry(sizeX, 2, sizeZ), standPaint)
+  stand.position.set(x, FLOOR_Y + 1, z)
   scene.add(stand)
 
   world.createCollider(
-    RAPIER.ColliderDesc.cuboid(16, 1, 1.5).setTranslation(0, FLOOR_Y + 1, z)
+    RAPIER.ColliderDesc.cuboid(sizeX / 2, 1, sizeZ / 2).setTranslation(x, FLOOR_Y + 1, z)
   )
+}
 
-  for (let x = -12; x <= 12; x += 3) {
-    const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
-    spectatorCount++
-    const shirt = new THREE.MeshStandardMaterial({ color, flatShading: true })
-    addPerson(x, FLOOR_Y + 2, z, 1, shirt)
+function addSpectator(x: number, z: number, sideways: boolean) {
+  const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
+  spectatorCount++
+  const shirt = new THREE.MeshStandardMaterial({ color, flatShading: true })
+  addPerson(x, FLOOR_Y + 2, z, AUDIENCE_SIZE, shirt, sideways)
+}
+
+for (const sideX of [-1, 1]) {
+  for (const sideZ of [-1, 1]) {
+    addStand(sideX * 14.75, sideZ * 22, 19.5, 5)
+    addStand(sideX * 22, sideZ * 13.75, 5, 11.5)
+
+    for (const x of [6, 10, 14, 18, 22]) addSpectator(sideX * x, sideZ * 22, false)
+    for (const z of [18, 14, 10]) addSpectator(sideX * 22, sideZ * z, true)
   }
 }
 
@@ -309,7 +345,7 @@ type Breakable = {
 const breakables = new Map<number, Breakable>()
 
 function addTrophyShelf(z: number) {
-  const shelfY = 4
+  const shelfY = 9
 
   const board = new THREE.Mesh(new THREE.BoxGeometry(26, 0.2, 1), shelfPaint)
   board.position.set(0, shelfY, z)
@@ -347,8 +383,8 @@ function addTrophyShelf(z: number) {
   }
 }
 
-addTrophyShelf(19)
-addTrophyShelf(-19)
+addTrophyShelf(29.4)
+addTrophyShelf(-29.4)
 
 function smash(item: Breakable) {
   if (item.broken) return
@@ -649,6 +685,8 @@ scene.traverse((object) => {
 // 5. Drag to orbit, pinch or scroll to zoom
 const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
+controls.maxDistance = 26
+controls.maxPolarAngle = Math.PI / 2.1
 
 // 5b. The aiming arrow: a flat shaft and a four-sided cone
 const arrow = new THREE.Group()
