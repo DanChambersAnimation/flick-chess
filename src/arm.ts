@@ -198,7 +198,10 @@ export function updateArm(arm: Arm, elapsed: number) {
 
   // Turn the hand smoothly, tipped forward while aiming
   lookPoint.copy(arm.hand.position)
-  if (arm.mode === 'rest') {
+  if (arm.mode === 'rest' && arm.flailTime > 0) {
+    // Point the fingers along the arm: shoulder to hand, then on past the hand
+    lookPoint.add(arm.hand.position).sub(arm.sleeve.position)
+  } else if (arm.mode === 'rest') {
     lookPoint.add(arm.restDirection)
   } else {
     lookPoint.add(arm.direction)
