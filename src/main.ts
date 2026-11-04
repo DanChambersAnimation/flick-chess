@@ -792,7 +792,7 @@ function afterStep() {
 
 function resetGame() {
   play('fanfare')
-  if (aiming) stopAiming()
+  if (aiming || settingLift) stopAiming()
   resetLiftSlider()
   if (queenRun) {
     queenRun.piece.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
@@ -899,6 +899,8 @@ const pointer = new THREE.Vector2()
 const boardPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
 const shot = new THREE.Vector3()
 let aiming = false
+let settingLift = false
+let liftDrag: { x: number; z: number; from: number } | null = null
 let selected: Piece | null = null
 const liftSlider = document.querySelector<HTMLInputElement>('#lift')!
 const hookButton = document.querySelector<HTMLButtonElement>('#hook')!
@@ -947,6 +949,7 @@ function resetLiftSlider() {
 
 liftSlider.addEventListener('input', () => {
   if (selected) liftSlider.value = String(getLift(selected.kind))
+  if (settingLift) updateArrow()
 })
 
 function pointOnBoard(event: PointerEvent) {
@@ -979,15 +982,41 @@ function updateArrow() {
 
 function stopAiming() {
   aiming = false
+  settingLift = false
+  liftDrag = null
   arrow.visible = false
+  backButton.hidden = true
   controls.enabled = true
   restArm(activeArm)
+  showStatus()
 }
+
+function fireFlick(piece: Piece) {
+  stopAiming()
+  flickArm(activeArm)
+  play('thwack')
+  applyFlick(piece, shot, getLift(piece.kind), hookDirection)
+}
+
+// Phones have no Esc key, so the button is the way back on every device
+const backButton = document.querySelector<HTMLButtonElement>('#back')!
+if (matchMedia('(pointer: coarse)').matches) backButton.textContent = 'Back to aim'
+
+backButton.addEventListener('click', stopAiming)
+
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'Escape' && (aiming || settingLift)) stopAiming()
+})
 
 // capture: true means we hear the press before OrbitControls does
 renderer.domElement.addEventListener('pointerdown', (event) => {
   const spot = pointOnBoard(event)
   if (!spot) return
+
+  if (settingLift) {
+    liftDrag = { x: spot.x, z: spot.z, from: Number(liftSlider.value) }
+    return
+  }
 
   // Did the ray hit a piece? If not, allow for a slightly clumsy thumb.
   const hit = raycaster.intersectObjects(pieces.map((p) => p.mesh))[0]
@@ -1014,6 +1043,22 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
 }, { capture: true })
 
 window.addEventListener('pointermove', (event) => {
+  if (liftDrag && selected) {
+    const spot = pointOnBoard(event)
+    if (!spot) return
+
+    // How far the pointer has moved back along the aim line
+    const backX = liftDrag.x - spot.x
+    const backZ = liftDrag.z - spot.z
+    const pulled = (backX * shot.x + backZ * shot.z) / shot.length()
+
+    const top = Number(liftSlider.max)
+    liftSlider.value = String(liftDrag.from + (pulled / MAX_PULL) * top)
+    liftSlider.value = String(getLift(selected.kind))
+    updateArrow()
+    return
+  }
+
   if (!aiming || !selected) return
   const spot = pointOnBoard(event)
   if (!spot) return
@@ -1061,12 +1106,23 @@ function applyFlick(
 }
 
 window.addEventListener('pointerup', () => {
+  if (liftDrag && selected) {
+    fireFlick(selected)
+    return
+  }
+
   if (!aiming || !selected) return
-  stopAiming()
-  if (shot.length() <= 0.1) return
-  flickArm(activeArm)
-  play('thwack')
-  applyFlick(selected, shot, getLift(selected.kind), hookDirection)
+  if (shot.length() <= 0.1) {
+    stopAiming()
+    return
+  }
+
+  // The aim is locked in. The next press and release sets the lift and flicks.
+  aiming = false
+  settingLift = true
+  backButton.hidden = false
+  statusLine.textContent =
+    selected.kind === 'queen' ? 'Click to flick' : 'Pull back again for lift, let go to flick'
 })
 
 window.addEventListener('pointercancel', stopAiming)

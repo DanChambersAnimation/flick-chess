@@ -72,3 +72,12 @@ canvas { display: block; filter: grayscale(1) contrast(1.2); }
   padding: 0 16px;
   font: bold 16px sans-serif;
 }
+#back {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-height: 44px;
+  padding: 0 16px;
+  font: bold 16px sans-serif;
+}
