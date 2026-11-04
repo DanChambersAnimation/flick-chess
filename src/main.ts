@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
 import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
-import { makeArm, startReach, setAim, restArm, flickArm, updateArm } from './arm'
+import { makeArm, startReach, setAim, restArm, flickArm, updateArms, type Arm } from './arm'
+import { makeCrowd, updateCrowd, excite, type SpectatorPlan } from './crowd'
 
 await RAPIER.init()
 
@@ -197,43 +198,6 @@ world.createCollider(
   RAPIER.ColliderDesc.cuboid(50, 0.1, 50).setTranslation(0, FLOOR_Y - 0.1, 0)
 )
 
-const skinPaint = new THREE.MeshStandardMaterial({
-  color: 0xf2c9a0,
-  flatShading: true,
-  emissive: 0xf2c9a0,
-  emissiveIntensity: 0.15,
-})
-
-function addPerson(
-  x: number,
-  feetY: number,
-  z: number,
-  size: number,
-  paint: THREE.Material,
-  sideways: boolean
-) {
-  const bodyY = feetY + 1.5 * size
-  const headY = feetY + 3.9 * size
-  const headSize = 0.9 * size
-  const width = sideways ? size : 2 * size
-  const depth = sideways ? 2 * size : size
-
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(width, 3 * size, depth), paint)
-  torso.position.set(x, bodyY, z)
-  scene.add(torso)
-
-  const face = new THREE.Mesh(new THREE.IcosahedronGeometry(headSize, 1), skinPaint)
-  face.position.set(x, headY, z)
-  scene.add(face)
-
-  world.createCollider(
-    RAPIER.ColliderDesc.cuboid(width / 2, 1.5 * size, depth / 2).setTranslation(x, bodyY, z)
-  )
-  world.createCollider(
-    RAPIER.ColliderDesc.ball(headSize).setTranslation(x, headY, z)
-  )
-}
-
 const players = new Map<number, Character>()
 
 function addPlayer(z: number, paint: THREE.Material) {
@@ -271,9 +235,17 @@ const blueBody = addPlayer(-7.2, bluePaint)
 
 // Shoulders are measured from each player's feet, and start inside the torso
 const arms = {
-  red: makeArm(scene, redBody, new THREE.Vector3(1.7, 5.3, -0.3), redPaint, -1),
-  blue: makeArm(scene, blueBody, new THREE.Vector3(-1.7, 5.3, 0.3), bluePaint, 1),
+  red: [
+    makeArm(scene, redBody, new THREE.Vector3(1.7, 5.3, -0.3), redPaint, -1, false),
+    makeArm(scene, redBody, new THREE.Vector3(-1.7, 5.3, -0.3), redPaint, -1, true),
+  ],
+  blue: [
+    makeArm(scene, blueBody, new THREE.Vector3(-1.7, 5.3, 0.3), bluePaint, 1, false),
+    makeArm(scene, blueBody, new THREE.Vector3(1.7, 5.3, 0.3), bluePaint, 1, true),
+  ],
 }
+const allArms = [...arms.red, ...arms.blue]
+let activeArm: Arm = arms.red[0]
 
 // 4b-2b. The walls of the room
 const wallPaint = new THREE.MeshStandardMaterial({ color: 0x1f2430 })
@@ -309,16 +281,29 @@ function addStand(x: number, z: number, sizeX: number, sizeZ: number) {
   )
 }
 
+const spectators: SpectatorPlan[] = []
+
 function addSpectator(x: number, z: number, sideways: boolean) {
   const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
   spectatorCount++
-  const shirt = new THREE.MeshStandardMaterial({
-    color,
-    flatShading: true,
-    emissive: color,
-    emissiveIntensity: 0.15,
-  })
-  addPerson(x, FLOOR_Y + 2, z, AUDIENCE_SIZE, shirt, sideways)
+
+  const size = AUDIENCE_SIZE
+  const feetY = FLOOR_Y + 2
+  const width = sideways ? size : 2 * size
+  const depth = sideways ? 2 * size : size
+
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(width / 2, 1.5 * size, depth / 2)
+      .setTranslation(x, feetY + 1.5 * size, z)
+  )
+  world.createCollider(
+    RAPIER.ColliderDesc.ball(0.9 * size).setTranslation(x, feetY + 3.9 * size, z)
+  )
+
+  let bodyYaw = z > 0 ? Math.PI : 0
+  if (sideways) bodyYaw = x > 0 ? -Math.PI / 2 : Math.PI / 2
+
+  spectators.push({ x, z, feetY, size, bodyYaw, color })
 }
 
 for (const sideX of [-1, 1]) {
@@ -330,6 +315,8 @@ for (const sideX of [-1, 1]) {
     for (const z of [18, 14, 10]) addSpectator(sideX * 22, sideZ * z, true)
   }
 }
+
+const crowd = makeCrowd(scene, spectators)
 
 // 4b-2c. A trophy shelf at each end. Fixed pattern, not randomness,
 // so every device builds exactly the same room.
@@ -425,6 +412,7 @@ function smash(item: Breakable) {
   item.collider.setEnabled(false)
   burst(scene, item.mesh.position, item.color, 24, 5)
   addShake(0.1)
+  excite(crowd, 0.6)
 }
 
 function handleImpacts() {
@@ -444,6 +432,7 @@ function handleImpacts() {
       const pieceHandle = players.has(handle1) ? handle2 : handle1
       const at = world.getCollider(pieceHandle).translation()
       statusLine.textContent = hitCharacter(scene, person, at)
+      excite(crowd, 1)
       return
     }
 
@@ -460,6 +449,7 @@ function handleImpacts() {
     const size = Math.min(event.totalForceMagnitude() / 150, 4)
     burst(scene, at, 0xffb703, Math.round(6 * size), 3 + size)
     addShake(0.02 * size)
+    excite(crowd, 0.1 * size)
   })
 }
 
@@ -729,6 +719,28 @@ scene.traverse((object) => {
   }
 })
 
+// 4f. What the crowd is watching: the chosen piece, then the fastest piece
+const boardCentre = new THREE.Vector3()
+
+function findFocus() {
+  if (aiming && selected) return selected.mesh.position
+  if (phase !== 'rolling') return boardCentre
+
+  let fastest = boardCentre
+  let topSpeed = 0.5
+
+  for (const piece of pieces) {
+    if (piece.out) continue
+    const v = piece.body.linvel()
+    const speed = v.x * v.x + v.y * v.y + v.z * v.z
+    if (speed > topSpeed) {
+      topSpeed = speed
+      fastest = piece.mesh.position
+    }
+  }
+  return fastest
+}
+
 // 5. Drag to orbit, pinch or scroll to zoom
 const controls = new OrbitControls(camera, renderer.domElement)
 controls.enableDamping = true
@@ -801,7 +813,7 @@ function stopAiming() {
   aiming = false
   arrow.visible = false
   controls.enabled = true
-  restArm(arms[turn])
+  restArm(activeArm)
 }
 
 // capture: true means we hear the press before OrbitControls does
@@ -826,7 +838,9 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     aiming = true
     controls.enabled = false
     shot.set(0, 0, 0)
-    startReach(arms[turn], touched.mesh.position)
+    const pieceX = touched.mesh.position.x
+    activeArm = arms[turn].find((arm) => arm.shoulder.position.x > 0 === pieceX > 0)!
+    startReach(activeArm, touched.mesh.position)
   }
 }, { capture: true })
 
@@ -838,7 +852,7 @@ window.addEventListener('pointermove', (event) => {
   const from = selected.mesh.position
   shot.set(from.x - spot.x, 0, from.z - spot.z)
   shot.clampLength(0, MAX_PULL)
-  setAim(arms[turn], from, shot, shot.length() / MAX_PULL)
+  setAim(activeArm, from, shot, shot.length() / MAX_PULL)
   updateArrow()
 })
 
@@ -846,7 +860,7 @@ window.addEventListener('pointerup', () => {
   if (!aiming || !selected) return
   stopAiming()
   if (shot.length() <= 0.1) return
-  flickArm(arms[turn])
+  flickArm(activeArm)
 
   if (selected.kind === 'queen') {
     startQueen(selected, shot.x * 4, shot.z * 4)
@@ -912,8 +926,8 @@ renderer.setAnimationLoop((time) => {
     piece.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
   }
 
-  updateArm(arms.red, elapsed)
-  updateArm(arms.blue, elapsed)
+  updateArms(allArms, elapsed)
+  updateCrowd(crowd, findFocus(), elapsed)
   controls.update()
   const shake = updateEffects(scene, elapsed)
   camera.position.add(shake)

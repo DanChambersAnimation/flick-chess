@@ -9,7 +9,7 @@ const POSE = {
   pitch: 0.785,      // How far the hand tips forward (0.785 is 45 degrees)
   dropArc: 0.6,      // How high the hand arcs on its way in
   dropMax: 2.5,      // The highest that arc can go
-  restHeight: 0.5,   // Hand height at rest
+  restHeight: -1.8,  // Hand height at rest, hanging down
   curlBase: 1.7,     // Curl at the knuckle
   curlTip: 1.5,      // Curl at the fingertip joint
   strain: 0.35,      // Extra curl at full power
@@ -64,7 +64,8 @@ export function makeArm(
   body: THREE.Group,
   shoulderPoint: THREE.Vector3,
   paint: THREE.Material,
-  facing: number
+  facing: number,
+  mirrored: boolean
 ): Arm {
   const shoulder = new THREE.Object3D()
   shoulder.position.copy(shoulderPoint)
@@ -75,11 +76,11 @@ export function makeArm(
   scene.add(sleeve)
 
   const restPoint = sleeve.position.clone()
+  restPoint.x *= 1.35
   restPoint.y = POSE.restHeight
-  restPoint.z += facing * 1.2
 
   const hand = new THREE.Group()
-  hand.scale.setScalar(POSE.handSize)
+  hand.scale.set(mirrored ? -POSE.handSize : POSE.handSize, POSE.handSize, POSE.handSize)
   hand.position.copy(restPoint)
   scene.add(hand)
 
@@ -123,7 +124,7 @@ export function makeArm(
     restPoint,
     target: new THREE.Vector3(),
     direction: new THREE.Vector3(0, 0, facing),
-    restDirection: new THREE.Vector3(0, 0, facing),
+    restDirection: new THREE.Vector3(0, -1, facing * 0.2),
     facing,
     mode: 'rest',
     power: 0,
@@ -204,7 +205,7 @@ export function updateArm(arm: Arm, elapsed: number) {
   const push = (wantedLean - arm.lean) * POSE.leanSpring - arm.leanSpeed * POSE.leanDamping
   arm.leanSpeed += push * step
   arm.lean += arm.leanSpeed * step
-  arm.body.rotation.x = arm.facing * arm.lean
+  arm.body.rotation.x += arm.facing * arm.lean
 
   // Work out the finger's curl: 1 is cocked, 0 is straight
   if (arm.mode === 'flick') {
@@ -233,4 +234,10 @@ export function updateArm(arm: Arm, elapsed: number) {
 
   arm.knuckle.rotation.x = POSE.curlBase * arm.curl
   arm.fingertip.rotation.x = POSE.curlTip * arm.curl
+}
+
+// Two arms share one body, so clear its lean and add up both arms
+export function updateArms(arms: Arm[], elapsed: number) {
+  for (const arm of arms) arm.body.rotation.x = 0
+  for (const arm of arms) updateArm(arm, elapsed)
 }
