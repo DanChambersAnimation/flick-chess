@@ -9,6 +9,7 @@ import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, t
 import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
 import { makeCrowd, updateCrowd, excite, knockSpectator, resetCrowd, type SpectatorPlan } from './crowd'
 import { startAudio, play, type SoundName } from './sound'
+import { comment, resetCommentary, type CommentEvent } from './commentary'
 
 await RAPIER.init()
 
@@ -37,8 +38,8 @@ tableLight.shadow.camera.far = 40
 tableLight.shadow.normalBias = 0.03
 scene.add(tableLight)
 
-for (const [side, color] of [[1, 0xff4040], [-1, 0x4080ff]]) {
-  const endLight = new THREE.SpotLight(color, 300, 30, Math.PI / 4, 0.6, 2)
+for (const side of [1, -1]) {
+  const endLight = new THREE.SpotLight(0xfff0d0, 700, 30, Math.PI / 3, 0.6, 2)
   endLight.position.set(0, 16, side * 20)
   endLight.target.position.set(0, 9, side * 29)
   scene.add(endLight, endLight.target)
@@ -444,6 +445,8 @@ function addTrophyShelf(z: number) {
         flatShading: true,
         metalness: 0.4,
         roughness: 0.3,
+        emissive: type.color,
+        emissiveIntensity: 0.3,
       })
     )
     mesh.position.set(x, y, z)
@@ -654,6 +657,14 @@ let winner: Side | null = null
 let rollingSteps = 0
 const hasFlicked = { red: false, blue: false }
 const statusLine = document.querySelector<HTMLDivElement>('#status')!
+const captionLine = document.querySelector<HTMLDivElement>('#caption')!
+
+// A snapshot taken at each flick, so the end of the turn can see what changed
+const atFlick = { red: 0, blue: 0, kings: 0, opening: false }
+let queenWrapped = false
+
+// Online, the host will choose this seed and send it to both devices
+resetCommentary(Math.floor(Math.random() * 1000))
 
 let hook: { body: RAPIER.RigidBody; x: number; z: number } | null = null
 let queenRun: {
@@ -685,6 +696,7 @@ function stepQueen() {
   if (run.x < -4) { run.x += 8; wrapped = true }
   if (run.z > 4) { run.z -= 8; wrapped = true }
   if (run.z < -4) { run.z += 8; wrapped = true }
+  if (wrapped) queenWrapped = true
 
   const target = { x: run.x, y: run.piece.homeY, z: run.z }
   if (wrapped) run.piece.body.setTranslation(target, true)
@@ -732,7 +744,36 @@ function showStatus() {
   else statusLine.textContent = `${SIDE_NAMES[turn]} to flick`
 }
 
+function countPlayable(side: Side) {
+  return pieces.filter((p) => p.side === side && isPlayable(p)).length
+}
+
+function countKings() {
+  return pieces.filter((p) => p.kind === 'king' && isPlayable(p)).length
+}
+
+// One flick gets one caption, so the order here sets which event wins
+function readTurn(flicker: Side, other: Side): CommentEvent | null {
+  const ownLost = atFlick[flicker] - countPlayable(flicker)
+  const otherLost = atFlick[other] - countPlayable(other)
+
+  if (countKings() < atFlick.kings) return 'kingHit'
+  if (ownLost > otherLost) return 'ownGoal'
+  if (otherLost >= 3) return 'wipeout'
+  if (queenWrapped) return 'queenWrap'
+  if (atFlick.opening) return 'opening'
+  if (otherLost === 0) return 'nearMiss'
+  return null
+}
+
 function startRolling() {
+  atFlick.red = countPlayable('red')
+  atFlick.blue = countPlayable('blue')
+  atFlick.kings = countKings()
+  atFlick.opening = !hasFlicked.red && !hasFlicked.blue
+  queenWrapped = false
+  captionLine.textContent = ''
+
   phase = 'rolling'
   rollingSteps = 0
   hasFlicked[turn] = true
@@ -749,6 +790,7 @@ function endTurn() {
   }
   const flicker = turn
   const other: Side = flicker === 'red' ? 'blue' : 'red'
+  captionLine.textContent = comment(readTurn(flicker, other))
 
   if (!hasPlayablePiece(flicker)) {
     winner = other
@@ -792,6 +834,8 @@ function afterStep() {
 
 function resetGame() {
   play('fanfare')
+  captionLine.textContent = ''
+  resetCommentary(Math.floor(Math.random() * 1000))
   if (aiming || settingLift) stopAiming()
   resetLiftSlider()
   if (queenRun) {

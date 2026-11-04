@@ -32,7 +32,6 @@
 ## Still to do
 - Test that physics results match across two different devices.
 - Automated opening-shot test, to stop first-move back-row wipeouts, then balance.
-- Silly commentary on moves, e.g. "That reminds me of Sierpinsky's Spanish opening in Prague, 1957".
 - Load my Blender heads (.glb) by named parts, with drawn textures. Choosable characters.
 - Replace placeholder sounds with my recordings.
 - Earn lift through score, damage meter, power-ups, bonus squares.

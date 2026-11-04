@@ -81,3 +81,21 @@ canvas { display: block; filter: grayscale(1) contrast(1.2); }
   padding: 0 16px;
   font: bold 16px sans-serif;
 }
+#caption {
+  position: fixed;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 160px);
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.7);
+  text-align: center;
+  color: #f2ead3;
+  font: italic 18px Georgia, serif;
+  pointer-events: none;
+}
+#caption:empty {
+  display: none;
+}
