@@ -5,6 +5,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
 import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
+import { makeArm, startReach, setAim, restArm, flickArm, updateArm } from './arm'
 
 await RAPIER.init()
 
@@ -58,11 +59,6 @@ const darkSquare = new THREE.MeshStandardMaterial({
   emissive: 0x6b4f3a,
   emissiveIntensity: 0.25,
 })
-
-// The glow can't light the room itself, so a hidden light does it
-const boardGlow = new THREE.PointLight(0xffd8a0, 40, 18, 2)
-boardGlow.position.set(0, 0.5, 0)
-scene.add(boardGlow)
 
 for (let rank = 0; rank < 8; rank++) {
   for (let file = 0; file < 8; file++) {
@@ -205,7 +201,7 @@ const skinPaint = new THREE.MeshStandardMaterial({
   color: 0xf2c9a0,
   flatShading: true,
   emissive: 0xf2c9a0,
-  emissiveIntensity: 0.3,
+  emissiveIntensity: 0.15,
 })
 
 function addPerson(
@@ -266,6 +262,11 @@ function addPlayer(z: number, paint: THREE.Material) {
 addPlayer(7.2, redPaint)
 addPlayer(-7.2, bluePaint)
 
+const arms = {
+  red: makeArm(scene, new THREE.Vector3(2.4, 1.4, 6.4), redPaint, -1),
+  blue: makeArm(scene, new THREE.Vector3(-2.4, 1.4, -6.4), bluePaint, 1),
+}
+
 // 4b-2b. The walls of the room
 const wallPaint = new THREE.MeshStandardMaterial({ color: 0x1f2430 })
 
@@ -307,7 +308,7 @@ function addSpectator(x: number, z: number, sideways: boolean) {
     color,
     flatShading: true,
     emissive: color,
-    emissiveIntensity: 0.3,
+    emissiveIntensity: 0.15,
   })
   addPerson(x, FLOOR_Y + 2, z, AUDIENCE_SIZE, shirt, sideways)
 }
@@ -792,6 +793,7 @@ function stopAiming() {
   aiming = false
   arrow.visible = false
   controls.enabled = true
+  restArm(arms[turn])
 }
 
 // capture: true means we hear the press before OrbitControls does
@@ -816,6 +818,7 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
     aiming = true
     controls.enabled = false
     shot.set(0, 0, 0)
+    startReach(arms[turn], touched.mesh.position)
   }
 }, { capture: true })
 
@@ -827,6 +830,7 @@ window.addEventListener('pointermove', (event) => {
   const from = selected.mesh.position
   shot.set(from.x - spot.x, 0, from.z - spot.z)
   shot.clampLength(0, MAX_PULL)
+  setAim(arms[turn], from, shot, shot.length() / MAX_PULL)
   updateArrow()
 })
 
@@ -834,6 +838,7 @@ window.addEventListener('pointerup', () => {
   if (!aiming || !selected) return
   stopAiming()
   if (shot.length() <= 0.1) return
+  flickArm(arms[turn])
 
   if (selected.kind === 'queen') {
     startQueen(selected, shot.x * 4, shot.z * 4)
@@ -899,6 +904,8 @@ renderer.setAnimationLoop((time) => {
     piece.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
   }
 
+  updateArm(arms.red, elapsed)
+  updateArm(arms.blue, elapsed)
   controls.update()
   const shake = updateEffects(scene, elapsed)
   camera.position.add(shake)
