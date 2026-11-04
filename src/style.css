@@ -1,5 +1,5 @@
 html, body, #app { margin: 0; height: 100%; background: #2b2d42; overflow: hidden; }
-canvas {display: block; }
+canvas { display: block; filter: grayscale(1) contrast(1.2); }
 #lift {
   position: fixed;
   right: 16px;
