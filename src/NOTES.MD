@@ -38,3 +38,27 @@
 - Earn lift through score, damage meter, power-ups, bonus squares.
 - Resurrect a fallen piece after wiping out all their pawns or their queen.
 - Title screen and menus, standard aiming mode, phone testing, hosting, online play.
+
+## Plan from 4 Nov 2026
+Work in this order:
+1. Test `grayscale(1) contrast(1.2)` on the canvas. Move the win fanfare from startRolling() to endTurn().
+2. Move the flick out of pointerup into applyFlick(), taking piece, shot, lift and hook. The computer player, opening test, replays and online play will all use it.
+3. Add commentary as text captions, tagged by event: opening, wipeout, own goal, near miss, king hit, queen wrap. Use a shared seed online.
+4. Decide what damage does. Idea: losing all three items means forfeiting the game.
+5. Take one Blender head all the way through, with three named breakables.
+6. Build a kit of heads, hair, facial hair and accessories, including female characters.
+7. Add the computer opponent using Rapier snapshots, then the opening test and balancing.
+8. Build the character selection screen, with random names and a random computer pick in one-player games.
+
+## Design decisions so far
+- Items have two stages, askew then gone, with one item lost per flick at most. Falling items are visual-only.
+- Play it straight: silence while aiming, a still crowd, a chess clock, captions and annotations like `Qx??`.
+- If greyscale stays, use ivory and ebony for the sides, and dark suits for the crowd.
+- Check the licence on every music recording. Option: multitrack my own solemn choir.
+- Women's Russian surnames change, e.g. Kosminsky becomes Kosminskaya.
+
+## Also to do
+- Swap the camera for each player in pass-and-play.
+- Add an on-screen reset button.
+- Let players resign by tipping their king.
+- Add replays from the stored flick list.
