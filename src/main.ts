@@ -10,7 +10,7 @@ await RAPIER.init()
 
 // 1. The three things every 3D program needs
 const scene = new THREE.Scene()
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100)
+const camera = new THREE.PerspectiveCamera(53, 1, 0.1, 100)
 camera.position.set(0, 13, 10)
 
 const renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -48,8 +48,21 @@ for (const [side, color] of [[1, 0xff4040], [-1, 0x4080ff]]) {
 
 // 3. The board: 64 boxes sharing one shape
 const squareShape = new THREE.BoxGeometry(1, 0.2, 1)
-const lightSquare = new THREE.MeshStandardMaterial({ color: 0xe9d8a6 })
-const darkSquare = new THREE.MeshStandardMaterial({ color: 0x6b4f3a })
+const lightSquare = new THREE.MeshStandardMaterial({
+  color: 0xe9d8a6,
+  emissive: 0xe9d8a6,
+  emissiveIntensity: 0.25,
+})
+const darkSquare = new THREE.MeshStandardMaterial({
+  color: 0x6b4f3a,
+  emissive: 0x6b4f3a,
+  emissiveIntensity: 0.25,
+})
+
+// The glow can't light the room itself, so a hidden light does it
+const boardGlow = new THREE.PointLight(0xffd8a0, 40, 18, 2)
+boardGlow.position.set(0, 0.5, 0)
+scene.add(boardGlow)
 
 for (let rank = 0; rank < 8; rank++) {
   for (let file = 0; file < 8; file++) {
@@ -188,7 +201,12 @@ world.createCollider(
   RAPIER.ColliderDesc.cuboid(50, 0.1, 50).setTranslation(0, FLOOR_Y - 0.1, 0)
 )
 
-const skinPaint = new THREE.MeshStandardMaterial({ color: 0xf2c9a0, flatShading: true })
+const skinPaint = new THREE.MeshStandardMaterial({
+  color: 0xf2c9a0,
+  flatShading: true,
+  emissive: 0xf2c9a0,
+  emissiveIntensity: 0.3,
+})
 
 function addPerson(
   x: number,
@@ -285,7 +303,12 @@ function addStand(x: number, z: number, sizeX: number, sizeZ: number) {
 function addSpectator(x: number, z: number, sideways: boolean) {
   const color = SHIRT_COLOURS[spectatorCount % SHIRT_COLOURS.length]
   spectatorCount++
-  const shirt = new THREE.MeshStandardMaterial({ color, flatShading: true })
+  const shirt = new THREE.MeshStandardMaterial({
+    color,
+    flatShading: true,
+    emissive: color,
+    emissiveIntensity: 0.3,
+  })
   addPerson(x, FLOOR_Y + 2, z, AUDIENCE_SIZE, shirt, sideways)
 }
 
@@ -445,6 +468,21 @@ for (const x of [-4.1, 4.1]) {
   )
 }
 
+// Plain numbers, not Math.sin: sin and cos can differ between devices
+const OCTAGON = [
+  [1, 0], [0.7071, 0.7071], [0, 1], [-0.7071, 0.7071],
+  [-1, 0], [-0.7071, -0.7071], [0, -1], [0.7071, -0.7071],
+]
+
+function taperedHull(height: number, radius: number) {
+  const points: number[] = []
+  for (const [x, z] of OCTAGON) {
+    points.push(x * radius, -height / 2, z * radius)
+    points.push(x * radius * 0.35, height / 2, z * radius * 0.35)
+  }
+  return new Float32Array(points)
+}
+
 // 4c. Every piece is a visible mesh, an invisible body and a home square
 type Side = 'red' | 'blue'
 
@@ -476,7 +514,7 @@ function addPiece(kind: PieceKind, x: number, z: number, side: Side) {
       .setAngularDamping(0.3)
   )
   world.createCollider(
-    RAPIER.ColliderDesc.cylinder(homeY, type.radius)
+    RAPIER.ColliderDesc.convexHull(taperedHull(type.height, type.radius))!
       .setDensity(type.density)
       .setFriction(0.5)
       .setRestitution(kind === 'bishop' ? 0.8 : 0.3)
