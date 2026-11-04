@@ -20,6 +20,7 @@ export type Item = {
   style: ItemStyle
   parts: THREE.Object3D[]
   stage: number // 0 is untouched, 1 is damaged, 2 is gone
+  shift?: { x: number; y: number } // How far an askew item moves as it tips
 }
 
 const STAGES = 2
@@ -151,7 +152,7 @@ export function makeCharacter(size: number, centreY: number): Character {
   hat.add(band)
 
   const items: Item[] = [
-    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stage: 0 },
+    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stage: 0, shift: { x: 0.1, y: 0.32 } },
     { name: 'Glasses', zone: 'eyes', style: 'askew', parts: [glasses], stage: 0 },
     { name: 'Teeth', zone: 'mouth', style: 'half', parts: teeth, stage: 0 },
   ]
@@ -204,7 +205,8 @@ function damageItem(scene: THREE.Scene, item: Item) {
   for (const part of item.parts) {
     if (item.stage < STAGES) {
       part.rotation.z += 0.35
-      part.position.x += 0.12
+      part.position.x += item.shift?.x ?? 0.12
+      part.position.y += item.shift?.y ?? 0
     } else {
       knockOff(scene, part)
     }
