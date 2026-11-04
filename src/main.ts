@@ -698,10 +698,6 @@ function startRolling() {
   phase = 'rolling'
   rollingSteps = 0
   hasFlicked[turn] = true
-  if (phase === 'over') {
-    play('winFanfare')
-    play('cheer')
-  }
   showStatus()
 }
 
@@ -725,6 +721,11 @@ function endTurn() {
   } else {
     turn = other
     phase = 'aiming'
+  }
+
+  if (phase === 'over') {
+    play('winFanfare')
+    play('cheer')
   }
   showStatus()
 }
