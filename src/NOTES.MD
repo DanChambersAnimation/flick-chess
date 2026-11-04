@@ -29,7 +29,6 @@
 - Queen: ploughs through everything, wraps at all edges, slows to a stop.
 
 ## Still to do
-- Spectators wobble when hit.
 - Test that physics results match across two different devices.
 - Automated opening-shot test, to stop first-move back-row wipeouts, then balance.
 - Silly commentary on moves, e.g. "That reminds me of Sierpinsky's Spanish opening in Prague, 1957".

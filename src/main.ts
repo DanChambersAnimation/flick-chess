@@ -7,7 +7,7 @@ import { burst, addShake, updateEffects, clearBits } from './effects'
 import { makeCharacter, hitCharacter, resetCharacter, type Character } from './character'
 import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, type Arm } from './arm'
 import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
-import { makeCrowd, updateCrowd, excite, type SpectatorPlan } from './crowd'
+import { makeCrowd, updateCrowd, excite, knockSpectator, resetCrowd, type SpectatorPlan } from './crowd'
 import { startAudio, play, type SoundName } from './sound'
 
 await RAPIER.init()
@@ -316,6 +316,15 @@ function addStand(x: number, z: number, sizeX: number, sizeZ: number) {
 
 const spectators: SpectatorPlan[] = []
 
+type SpectatorHit = {
+  index: number
+  torso: RAPIER.Collider
+  head: RAPIER.Collider
+  down: boolean
+}
+
+const spectatorHits = new Map<number, SpectatorHit>()
+
 // Looks random, but it's a fixed pattern so every device matches
 const BODY_HEIGHTS = [0.75, 1, 1.3]
 
@@ -332,14 +341,22 @@ function addSpectator(x: number, z: number, sideways: boolean) {
   const depth = sideways ? 2 * size : size
   const torsoHeight = 3 * size * bodyHeight
 
-  world.createCollider(
+  const torso = world.createCollider(
     RAPIER.ColliderDesc.cuboid(width / 2, torsoHeight / 2, depth / 2)
       .setTranslation(x, feetY + torsoHeight / 2, z)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(30)
   )
-  world.createCollider(
+  const head = world.createCollider(
     RAPIER.ColliderDesc.ball(0.9 * size)
       .setTranslation(x, feetY + torsoHeight + 0.9 * size, z)
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(30)
   )
+
+  const hit = { index: n, torso, head, down: false }
+  spectatorHits.set(torso.handle, hit)
+  spectatorHits.set(head.handle, hit)
 
   let bodyYaw = z > 0 ? Math.PI : 0
   if (sideways) bodyYaw = x > 0 ? -Math.PI / 2 : Math.PI / 2
@@ -457,6 +474,18 @@ function smash(item: Breakable) {
   play('crash')
 }
 
+function knockDown(hit: SpectatorHit, at: { x: number; y: number; z: number }) {
+  if (hit.down) return
+  hit.down = true
+  hit.torso.setEnabled(false)
+  hit.head.setEnabled(false)
+  knockSpectator(crowd, hit.index)
+  burst(scene, at, 0xffffff, 16, 6)
+  addShake(0.1)
+  excite(crowd, 0.8)
+  play('clonk')
+}
+
 function shakePlayer(handle: number, at: { x: number; z: number }, strength: number) {
   const hit = bodyHits.get(handle)
   if (!hit) return
@@ -483,6 +512,13 @@ function handleImpacts() {
     const item = breakables.get(handle1) ?? breakables.get(handle2)
     if (item) {
       smash(item)
+      return
+    }
+
+    const spectator = spectatorHits.get(handle1) ?? spectatorHits.get(handle2)
+    if (spectator) {
+      const pieceHandle = spectatorHits.has(handle1) ? handle2 : handle1
+      knockDown(spectator, world.getCollider(pieceHandle).translation())
       return
     }
 
@@ -780,6 +816,12 @@ function resetGame() {
     item.broken = false
     item.mesh.visible = true
     item.collider.setEnabled(true)
+  }
+  resetCrowd(crowd)
+  for (const hit of spectatorHits.values()) {
+    hit.down = false
+    hit.torso.setEnabled(true)
+    hit.head.setEnabled(true)
   }
   showStatus()
 }

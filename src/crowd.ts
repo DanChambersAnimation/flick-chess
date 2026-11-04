@@ -17,6 +17,9 @@ type Spectator = SpectatorPlan & {
   headSpeed: number
   jump: number
   jumpSpeed: number
+  down: boolean
+  fall: number
+  fallSpeed: number
 }
 
 export type Crowd = {
@@ -33,6 +36,8 @@ const EYE_Y = 0.2
 const EYE_Z = 0.86
 const MAX_HEAD_TURN = 1.1
 const MAX_GLANCE = 0.12
+const FLAT_ON_BACK = 1.5 // How far a spectator tips over, in radians
+const FALL_PULL = 12     // How fast they speed up as they topple
 
 const HEAD_SHAPES = [
   new THREE.IcosahedronGeometry(0.9, 1),
@@ -87,6 +92,9 @@ export function makeCrowd(scene: THREE.Scene, plans: SpectatorPlan[]): Crowd {
     headSpeed: 3 + Math.random() * 3,
     jump: 0,
     jumpSpeed: 0,
+    down: false,
+    fall: 0,
+    fallSpeed: 0,
   }))
 
   const headPaint = new THREE.MeshStandardMaterial({
@@ -111,6 +119,19 @@ export function excite(crowd: Crowd, amount: number) {
   crowd.excitement = Math.min(crowd.excitement + amount, 1.5)
 }
 
+// Purely visual: main.ts switches off the spectator's solid shape
+export function knockSpectator(crowd: Crowd, index: number) {
+  crowd.people[index].down = true
+}
+
+export function resetCrowd(crowd: Crowd) {
+  for (const person of crowd.people) {
+    person.down = false
+    person.fall = 0
+    person.fallSpeed = 0
+  }
+}
+
 function wrapAngle(angle: number) {
   return Math.atan2(Math.sin(angle), Math.cos(angle))
 }
@@ -122,6 +143,8 @@ function clamp(value: number, limit: number) {
 const part = new THREE.Object3D()
 const faceMatrix = new THREE.Matrix4()
 const offset = new THREE.Matrix4()
+const tilt = new THREE.Matrix4()
+const pivot = new THREE.Object3D()
 
 export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number) {
   crowd.excitement = Math.max(0, crowd.excitement - elapsed * 0.8)
@@ -132,7 +155,7 @@ export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number)
     if (person.jump <= 0) {
       person.jump = 0
       person.jumpSpeed = 0
-      if (Math.random() < crowd.excitement * elapsed * 8) {
+      if (!person.down && Math.random() < crowd.excitement * elapsed * 8) {
         person.jumpSpeed = 2 + Math.random() * 3
       }
     }
@@ -149,6 +172,23 @@ export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number)
     // Pupils get there before the head does
     const glance = clamp(wrapAngle(toFocus - person.yaw) * turn * 6, MAX_GLANCE)
 
+    // Topple backwards like a plank, with one small bounce on landing
+    if (person.down && person.fall < FLAT_ON_BACK) {
+      person.fallSpeed += FALL_PULL * elapsed
+      person.fall += person.fallSpeed * elapsed
+    }
+    if (person.fall >= FLAT_ON_BACK && person.fallSpeed > 1) {
+      person.fall = FLAT_ON_BACK - 0.001
+      person.fallSpeed *= -0.3
+    }
+
+    // Tilt builds a turn around the feet, which every part below then shares
+    pivot.position.set(person.x, person.feetY, person.z)
+    pivot.rotation.set(0, person.bodyYaw, 0)
+    pivot.updateMatrix()
+    tilt.copy(pivot.matrix).multiply(offset.makeRotationX(-person.fall))
+    tilt.multiply(offset.copy(pivot.matrix).invert())
+
     const baseY = person.feetY + person.jump
     const torsoHeight = 3 * person.size * person.bodyHeight
 
@@ -156,12 +196,13 @@ export function updateCrowd(crowd: Crowd, focus: THREE.Vector3, elapsed: number)
     part.rotation.set(0, person.bodyYaw, 0)
     part.scale.set(person.size, person.size * person.bodyHeight, person.size)
     part.updateMatrix()
-    crowd.torsos.setMatrixAt(i, part.matrix)
+    crowd.torsos.setMatrixAt(i, part.matrix.premultiply(tilt))
 
     part.position.set(person.x, baseY + torsoHeight + 0.9 * person.size, person.z)
     part.rotation.set(0, person.yaw, 0)
     part.scale.setScalar(person.size)
     part.updateMatrix()
+    part.matrix.premultiply(tilt)
     crowd.heads[person.headType].setMatrixAt(person.headSlot, part.matrix)
     faceMatrix.copy(part.matrix)
 
