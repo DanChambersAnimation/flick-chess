@@ -226,7 +226,6 @@ function damageItem(scene: THREE.Scene, item: Item, side: number) {
   for (const part of item.parts) {
     if (item.stage < item.stages) {
       part.rotation.z += 0.35
-      part.position.x += 0.12
     } else {
       knockOff(scene, part)
     }
