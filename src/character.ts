@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { burst, addShake, throwPart } from './effects'
 
 type SavedPart = {
@@ -12,149 +13,150 @@ type SavedPart = {
 export type HitZone = 'top' | 'eyes' | 'mouth'
 
 // askew: tips over until its last hit, then flies off.
-// half: loses half its parts, then the rest.
-type ItemStyle = 'askew' | 'half'
+// oneByOne: each hit knocks off the part nearest to where it landed.
+type ItemStyle = 'askew' | 'oneByOne'
 
 export type Item = {
   name: string
   zone: HitZone
   style: ItemStyle
   parts: THREE.Object3D[]
+  partsLeft: THREE.Object3D[] // The parts still on the head
   stages: number // How many hits it takes to lose this item
   stage: number // How many hits it has taken so far
+}
+
+// Heights and sizes measured from the markers in Blender, at model size
+export type Zones = {
+  topEyes: number
+  eyesNose: number
+  noseMouth: number
+  radius: number
+  height: number
+}
+
+// A model loaded once. Every character made from it shares its shapes and paint.
+export type HeadModel = {
+  scene: THREE.Group
+  zones: Zones
 }
 
 export type Character = {
   group: THREE.Group
   items: Item[]
+  zones: Zones
   size: number
   centreY: number // The head's height in the physics world, which never wobbles
+  facing: number // 1 facing +z, -1 facing -z. Turns world left and right into theirs.
   struck: boolean // Has this character already taken damage this flick?
+  marked: boolean // Has a nose or eye already changed this flick?
+  noses: THREE.Object3D[] // nose_0 is undamaged. Each hit shows the next one.
+  noseStage: number
+  leftEye: THREE.Object3D[] // Normal, then black
+  rightEye: THREE.Object3D[]
   saved: SavedPart[]
 }
 
-function paint(color: number) {
-  return new THREE.MeshStandardMaterial({ color, flatShading: true })
+function findPart(model: THREE.Object3D, name: string) {
+  const part = model.getObjectByName(name)
+  if (!part) throw new Error(`The head model has no object called ${name}`)
+  return part
 }
 
-function roundedRectangle(width: number, height: number, corner: number) {
-  const w = width / 2
-  const h = height / 2
-  const shape = new THREE.Shape()
-
-  shape.moveTo(-w + corner, -h)
-  shape.lineTo(w - corner, -h)
-  shape.absarc(w - corner, -h + corner, corner, -Math.PI / 2, 0, false)
-  shape.lineTo(w, h - corner)
-  shape.absarc(w - corner, h - corner, corner, 0, Math.PI / 2, false)
-  shape.lineTo(-w + corner, h)
-  shape.absarc(-w + corner, h - corner, corner, Math.PI / 2, Math.PI, false)
-  shape.lineTo(-w, -h + corner)
-  shape.absarc(-w + corner, -h + corner, corner, Math.PI, Math.PI * 1.5, false)
-  return shape
+// Finds every object whose name starts this way, in name order
+function findParts(model: THREE.Object3D, start: string) {
+  const parts: THREE.Object3D[] = []
+  model.traverse((object) => {
+    if (object.name.startsWith(start)) parts.push(object)
+  })
+  if (parts.length === 0) throw new Error(`The head model has no objects starting ${start}`)
+  return parts.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-// Built at size 1, facing +z, centred on the middle of the head
-export function makeCharacter(size: number, centreY: number): Character {
+// Shows one object from a set, and hides the others
+function showOnly(parts: THREE.Object3D[], index: number) {
+  parts.forEach((part, i) => {
+    part.visible = i === index
+  })
+}
+
+// Loads a Blender export and reads its zone markers
+export async function loadHeadModel(url: string): Promise<HeadModel> {
+  const { scene } = await new GLTFLoader().loadAsync(url)
+  scene.updateWorldMatrix(true, true)
+
+  // Each plane's height comes from its box, because its origin may be elsewhere
+  const planeHeight = (name: string) => new THREE.Box3().setFromObject(findPart(scene, name)).max.y
+  const body = new THREE.Box3().setFromObject(findPart(scene, 'zone_body'))
+
+  const zones = {
+    topEyes: planeHeight('zone_top_eyes'),
+    eyesNose: planeHeight('zone_eyes_nose'),
+    noseMouth: planeHeight('zone_nose_mouth'),
+    radius: (body.max.x - body.min.x) / 2,
+    height: body.max.y - body.min.y,
+  }
+
+  // The markers have done their job
+  for (const marker of findParts(scene, 'zone_')) marker.visible = false
+
+  return { scene, zones }
+}
+
+// Built from Blender, facing +z, centred on the middle of the head
+export function makeCharacter(
+  model: HeadModel,
+  size: number,
+  centreY: number,
+  facing: number
+): Character {
   const group = new THREE.Group()
   group.scale.setScalar(size)
 
-  // Head: eight-sided, turned so a flat side faces forwards
-  const head = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.9, 0.9, 1.5, 8, 1, false, Math.PI / 8),
-    paint(0xf2c9a0)
-  )
+  // clone(true) gives this character its own objects, so one can lose a hat alone
+  const head = model.scene.clone(true)
   group.add(head)
 
-  // Mouth and teeth
-  const mouth = new THREE.Group()
-  mouth.position.set(0, -0.35, 0.84)
-  group.add(mouth)
+  const noses = findParts(head, 'nose_')
+  const leftEye = findParts(head, 'eye_L_')
+  const rightEye = findParts(head, 'eye_R_')
+  showOnly(noses, 0)
+  showOnly(leftEye, 0)
+  showOnly(rightEye, 0)
 
-  const mouthShape = new THREE.ExtrudeGeometry(roundedRectangle(0.9, 0.5, 0.14), {
-    depth: 0.03,
-    bevelEnabled: false,
-    curveSegments: 3,
-  })
-  mouth.add(new THREE.Mesh(mouthShape, paint(0x3a0d12)))
-
-  const toothShape = new THREE.BoxGeometry(0.17, 0.18, 0.04)
-  const toothPaint = paint(0xfff8e7)
-  const teeth: THREE.Mesh[] = []
-
-  for (const y of [0.13, -0.13]) {
-    for (let i = 0; i < 4; i++) {
-      const tooth = new THREE.Mesh(toothShape, toothPaint)
-      tooth.position.set(-0.285 + i * 0.19, y, 0.05)
-      mouth.add(tooth)
-      teeth.push(tooth)
-    }
-  }
-
-  // Bulbous nose
-  const nose = new THREE.Mesh(new THREE.IcosahedronGeometry(0.24, 1), paint(0xe07a5f))
-  nose.position.set(0, 0.08, 0.98)
-  group.add(nose)
-
-  // Oval eyes with dot pupils
-  const eyeShape = new THREE.IcosahedronGeometry(1, 1)
-  const pupilShape = new THREE.IcosahedronGeometry(0.07, 0)
-  const eyePaint = paint(0xffffff)
-  const pupilPaint = paint(0x111111)
-
-  for (const x of [-0.32, 0.32]) {
-    const eye = new THREE.Mesh(eyeShape, eyePaint)
-    eye.scale.set(0.19, 0.27, 0.05)
-    eye.position.set(x, 0.38, 0.85)
-    group.add(eye)
-
-    const pupil = new THREE.Mesh(pupilShape, pupilPaint)
-    pupil.position.set(x, 0.38, 0.91)
-    group.add(pupil)
-  }
-
-  // Large square glasses: a four-sided ring turned 45 degrees is a square
-  const glasses = new THREE.Group()
-  glasses.position.set(0, 0.38, 0.96)
-  group.add(glasses)
-
-  const framePaint = paint(0x1a1a1a)
-  const frameShape = new THREE.TorusGeometry(0.4, 0.035, 4, 4)
-
-  for (const x of [-0.34, 0.34]) {
-    const lens = new THREE.Mesh(frameShape, framePaint)
-    lens.rotation.z = Math.PI / 4
-    lens.position.x = x
-    glasses.add(lens)
-  }
-
-  const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.05), framePaint)
-  glasses.add(bridge)
-
-  // Pork pie hat: wide brim, low flat crown, dark band
-  const hat = new THREE.Group()
-  hat.position.y = 0.75
-  group.add(hat)
-
-  const hatPaint = paint(0x4a3728)
-
-  const brim = new THREE.Mesh(new THREE.CylinderGeometry(1.08, 1.08, 0.06, 8), hatPaint)
-  brim.position.y = 0.03
-  hat.add(brim)
-
-  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.7, 0.34, 8), hatPaint)
-  crown.position.y = 0.23
-  hat.add(crown)
-
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.71, 0.71, 0.1, 8), paint(0x1a1a1a))
-  band.position.y = 0.11
-  hat.add(band)
+  const teeth = findParts(head, 'item_teeth_')
 
   const items: Item[] = [
-    { name: 'Hat', zone: 'top', style: 'askew', parts: [hat], stages: 1, stage: 0 },
-    { name: 'Glasses', zone: 'eyes', style: 'askew', parts: [glasses], stages: 2, stage: 0 },
-    { name: 'Teeth', zone: 'mouth', style: 'half', parts: teeth, stages: 2, stage: 0 },
+    {
+      name: 'Hat',
+      zone: 'top',
+      style: 'askew',
+      parts: [findPart(head, 'item_hat')],
+      partsLeft: [],
+      stages: 1,
+      stage: 0,
+    },
+    {
+      name: 'Glasses',
+      zone: 'eyes',
+      style: 'askew',
+      parts: [findPart(head, 'item_glasses')],
+      partsLeft: [],
+      stages: 2,
+      stage: 0,
+    },
+    {
+      name: 'Teeth',
+      zone: 'mouth',
+      style: 'oneByOne',
+      parts: teeth,
+      partsLeft: [],
+      stages: teeth.length,
+      stage: 0,
+    },
   ]
+
+  for (const item of items) item.partsLeft = [...item.parts]
 
   // Remember where everything belongs, ready for a new game
   const saved = items.flatMap((item) =>
@@ -167,7 +169,21 @@ export function makeCharacter(size: number, centreY: number): Character {
     }))
   )
 
-  return { group, items, size, centreY, struck: false, saved }
+  return {
+    group,
+    items,
+    zones: model.zones,
+    size,
+    centreY,
+    facing,
+    struck: false,
+    marked: false,
+    noses,
+    noseStage: 0,
+    leftEye,
+    rightEye,
+    saved,
+  }
 }
 
 // How many more hits this character can take before they forfeit
@@ -177,6 +193,7 @@ export function hitsLeft(person: Character) {
 
 export function newFlick(person: Character) {
   person.struck = false
+  person.marked = false
 }
 
 // Falling items are visual only, so real randomness is fine here
@@ -191,13 +208,18 @@ function knockOff(scene: THREE.Scene, object: THREE.Object3D) {
   throwPart(object, velocity, 2.5)
 }
 
-function damageItem(scene: THREE.Scene, item: Item) {
+// side is how far from the middle of the face the hit landed, at model size.
+// Plus is the character's left.
+function damageItem(scene: THREE.Scene, item: Item, side: number) {
   item.stage++
 
-  if (item.style === 'half') {
-    const half = Math.ceil(item.parts.length / 2)
-    const going = item.stage === 1 ? item.parts.slice(0, half) : item.parts.slice(half)
-    for (const part of going) knockOff(scene, part)
+  if (item.style === 'oneByOne') {
+    let nearest = item.partsLeft[0]
+    for (const part of item.partsLeft) {
+      if (Math.abs(part.position.x - side) < Math.abs(nearest.position.x - side)) nearest = part
+    }
+    item.partsLeft = item.partsLeft.filter((part) => part !== nearest)
+    knockOff(scene, nearest)
     return
   }
 
@@ -211,14 +233,29 @@ function damageItem(scene: THREE.Scene, item: Item) {
   }
 }
 
+// Noses and black eyes only change how a character looks, not how many hits they
+// have left. One change per flick stops a single rebound using them all up.
+function bruiseNose(person: Character) {
+  if (person.marked || person.noseStage >= person.noses.length - 1) return
+  person.marked = true
+  person.noseStage++
+  showOnly(person.noses, person.noseStage)
+}
+
+function blackenEye(person: Character, side: number) {
+  if (person.marked) return
+  person.marked = true
+  showOnly(side >= 0 ? person.leftEye : person.rightEye, 1)
+}
+
 type Point = { x: number; y: number; z: number }
 
 // Height decides which item was hit. This uses the fixed head height, not the
 // wobbling model, because damage can end the game and every device must agree.
-function findZone(height: number): HitZone | null {
-  if (height > 0.55) return 'top'
-  if (height > 0.2) return 'eyes'
-  if (height > -0.1) return null // The nose has nothing to lose
+function findZone(zones: Zones, height: number): HitZone | null {
+  if (height > zones.topEyes) return 'top'
+  if (height > zones.eyesNose) return 'eyes'
+  if (height > zones.noseMouth) return null // The nose has nothing to lose
   return 'mouth'
 }
 
@@ -235,21 +272,30 @@ export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
   // One call-out per flick, so a rebound can't talk over the damage
   if (person.struck) return null
 
-  const zone = findZone((at.y - person.centreY) / person.size)
-  if (!zone) return 'Nose!'
+  const zone = findZone(person.zones, (at.y - person.centreY) / person.size)
+  if (!zone) {
+    bruiseNose(person)
+    return 'Nose!'
+  }
+
+  // The heads stand on the room's centre line, so x is already measured from them
+  const side = (at.x * person.facing) / person.size
 
   const item = person.items.find((candidate) => candidate.zone === zone)
-  if (!item || item.stage >= item.stages) return BARE_HITS[zone]
+  if (!item || item.stage >= item.stages) {
+    if (zone === 'eyes') blackenEye(person, side)
+    return BARE_HITS[zone]
+  }
 
   person.struck = true
-  damageItem(scene, item)
+  damageItem(scene, item, side)
   return `${item.name}!`
 }
 
 // Test only: take a character down to one last hit
 export function leaveOneHit(scene: THREE.Scene, person: Character) {
   for (const item of person.items) {
-    while (item.stage < item.stages && hitsLeft(person) > 1) damageItem(scene, item)
+    while (item.stage < item.stages && hitsLeft(person) > 1) damageItem(scene, item, 0)
   }
 }
 
@@ -260,6 +306,14 @@ export function resetCharacter(person: Character) {
     part.object.quaternion.copy(part.quaternion)
     part.object.scale.copy(part.scale)
   }
-  for (const item of person.items) item.stage = 0
+  for (const item of person.items) {
+    item.stage = 0
+    item.partsLeft = [...item.parts]
+  }
   person.struck = false
+  person.marked = false
+  person.noseStage = 0
+  showOnly(person.noses, 0)
+  showOnly(person.leftEye, 0)
+  showOnly(person.rightEye, 0)
 }

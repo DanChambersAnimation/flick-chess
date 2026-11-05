@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
-import { makeCharacter, hitCharacter, hitsLeft, newFlick, leaveOneHit, resetCharacter, type Character } from './character'
+import { loadHeadModel, makeCharacter, hitCharacter, hitsLeft, newFlick, leaveOneHit, resetCharacter, type Character } from './character'
 import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, type Arm } from './arm'
 import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
 import { makeCrowd, updateCrowd, excite, knockSpectator, resetCrowd, type SpectatorPlan } from './crowd'
@@ -12,6 +12,7 @@ import { startAudio, play, type SoundName } from './sound'
 import { comment, resetCommentary, type CommentEvent } from './commentary'
 
 await RAPIER.init()
+const headModel = await loadHeadModel('models/head.glb')
 
 // 1. The three things every 3D program needs
 const scene = new THREE.Scene()
@@ -237,7 +238,7 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
   parent.add(neck)
   parts.push(neck)
 
-  const character = makeCharacter(2, HEAD_Y)
+  const character = makeCharacter(headModel, 2, HEAD_Y, z > 0 ? -1 : 1)
   character.group.position.y = 1.5
   character.group.rotation.y = z > 0 ? Math.PI : 0
   neck.add(character.group)
@@ -250,7 +251,10 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
   )
 
   const headCollider = world.createCollider(
-    RAPIER.ColliderDesc.cylinder(1.5, 1.8)
+    RAPIER.ColliderDesc.cylinder(
+      (character.zones.height / 2) * character.size,
+      character.zones.radius * character.size
+    )
       .setTranslation(0, HEAD_Y, z)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(40)
@@ -1218,7 +1222,7 @@ fitToWindow()
 const SLOW_MOTION = 0.2
 const SLOW_WARNING = 0.25 // Seconds before arrival that the slowdown begins
 const HEAD_WIDTH = 2.5
-const HEAD_RADIUS = 2.2 // The head, plus a bit for the size of the piece
+const HEAD_RADIUS = headModel.zones.radius * 2 + 0.4 // The head, plus a bit for the size of the piece
 let timeScale = 1
 
 // Is this piece about to reach the head at this end of the room?
