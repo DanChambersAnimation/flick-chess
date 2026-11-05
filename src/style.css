@@ -107,3 +107,29 @@ canvas { display: block; filter: grayscale(1) contrast(1.2); }
   padding: 0 16px;
   font: bold 16px sans-serif;
 }
+#dodge {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 16px;
+  background: #0b0d14;
+}
+#dodge[hidden] {
+  display: none;
+}
+#dodge p {
+  width: 100%;
+  margin: 0 0 12px;
+  text-align: center;
+  color: #f2ead3;
+  font: italic 22px Georgia, serif;
+}
+#dodge button {
+  min-height: 44px;
+  padding: 0 16px;
+  font: bold 16px sans-serif;
+}

@@ -48,6 +48,7 @@ export type Character = {
   size: number
   centreY: number // The head's height in the physics world, which never wobbles
   facing: number // 1 facing +z, -1 facing -z. Turns world left and right into theirs.
+  leanX: number // How far the head has dodged sideways, in the physics world
   struck: boolean // Has this character already taken damage this flick?
   marked: boolean // Has a nose or eye already changed this flick?
   noses: THREE.Object3D[] // nose_0 is undamaged. Each hit shows the next one.
@@ -179,6 +180,7 @@ export function makeCharacter(
     size,
     centreY,
     facing,
+    leanX: 0,
     struck: false,
     marked: false,
     noses,
@@ -281,8 +283,8 @@ export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
     return 'Nose!'
   }
 
-  // The heads stand on the room's centre line, so x is already measured from them
-  const side = (at.x * person.facing) / person.size
+  // Measured from the head, wherever it has dodged to
+  const side = ((at.x - person.leanX) * person.facing) / person.size
 
   const item = person.items.find((candidate) => candidate.zone === zone)
   if (!item || item.stage >= item.stages) {
@@ -293,6 +295,13 @@ export function hitCharacter(scene: THREE.Scene, person: Character, at: Point) {
   person.struck = true
   damageItem(scene, item, side)
   return `${item.name}!`
+}
+
+// Slides the visible head towards its dodge, and tilts it the same way
+export function updateLean(person: Character, elapsed: number) {
+  const group = person.group
+  group.position.x += (person.leanX - group.position.x) * Math.min(elapsed * 12, 1)
+  group.rotation.z = -group.position.x * 0.12 * person.facing
 }
 
 // Test only: take a character down to one last hit

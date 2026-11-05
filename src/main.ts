@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import RAPIER from '@dimforge/rapier3d-deterministic-compat'
 import { burst, addShake, updateEffects, clearBits } from './effects'
-import { loadHeadModel, makeCharacter, hitCharacter, hitsLeft, newFlick, leaveOneHit, resetCharacter, type Character } from './character'
+import { loadHeadModel, makeCharacter, hitCharacter, hitsLeft, newFlick, leaveOneHit, resetCharacter, updateLean, type Character } from './character'
 import { makeArm, startReach, setAim, restArm, flickArm, flailArm, updateArms, type Arm } from './arm'
 import { makeWobble, hitWobble, updateWobble, type Wobble } from './wobble'
 import { makeCrowd, updateCrowd, excite, knockSpectator, resetCrowd, type SpectatorPlan } from './crowd'
@@ -267,12 +267,13 @@ function addPlayer(z: number, paint: THREE.Material, side: Side) {
   bodyHits.set(headCollider.handle, { wobble, side, z })
   bodyHits.set(torsoCollider.handle, { wobble, side, z })
 
-  return { body, top: parent, character }
+  return { body, top: parent, character, headCollider }
 }
 
 const red = addPlayer(HEAD_Z.red, redPaint, 'red')
 const blue = addPlayer(HEAD_Z.blue, bluePaint, 'blue')
 const characters = { red: red.character, blue: blue.character }
+const headColliders = { red: red.headCollider, blue: blue.headCollider }
 
 // Shoulders are measured from each player's feet, and start inside the torso
 const arms = {
@@ -658,10 +659,11 @@ for (let file = 0; file < 8; file++) {
 }
 
 // 4d. The game rules
-type Phase = 'aiming' | 'rolling' | 'over'
+type Phase = 'dodging' | 'aiming' | 'rolling' | 'over'
 
 let turn: Side = 'red'
-let phase: Phase = 'aiming'
+let phase: Phase = 'dodging'
+let dodge = 0 // The waiting player's secret choice: -1 left, 0 stay, 1 right
 let winner: Side | null = null
 let rollingSteps = 0
 const hasFlicked = { red: false, blue: false }
@@ -751,7 +753,38 @@ const SIDE_NAMES = { red: 'Ivory', blue: 'Ebony' }
 function showStatus() {
   if (phase === 'over') statusLine.textContent = `${SIDE_NAMES[winner!]} wins! Press R`
   else if (phase === 'rolling') statusLine.textContent = '...'
+  else if (phase === 'dodging') statusLine.textContent = ''
   else statusLine.textContent = `${SIDE_NAMES[turn]} to flick`
+}
+
+// 4d-2. The dodge: the waiting player secretly picks a way to lean before each
+// flick. Left and right mean left and right of the screen.
+const LEAN = 2 // How far a dodge moves the head
+const dodgePanel = document.querySelector<HTMLDivElement>('#dodge')!
+const dodgeText = document.querySelector<HTMLParagraphElement>('#dodge-text')!
+
+function startDodge() {
+  const waiting: Side = turn === 'red' ? 'blue' : 'red'
+  phase = 'dodging'
+  dodge = 0
+  dodgeText.textContent = `${SIDE_NAMES[waiting]}, choose your dodge. ${SIDE_NAMES[turn]}, look away!`
+  dodgePanel.hidden = false
+  showStatus()
+}
+
+for (const button of dodgePanel.querySelectorAll('button')) {
+  button.addEventListener('click', () => {
+    dodge = Number(button.dataset.lean)
+    dodgePanel.hidden = true
+    phase = 'aiming'
+    showStatus()
+  })
+}
+
+// Moves the solid head, which every device must do at the same moment
+function moveHead(side: Side, x: number) {
+  characters[side].leanX = x
+  headColliders[side].setTranslation({ x, y: HEAD_Y, z: HEAD_Z[side] })
 }
 
 function countPlayable(side: Side) {
@@ -805,6 +838,8 @@ function startRolling() {
 }
 
 function endTurn() {
+  moveHead('red', 0)
+  moveHead('blue', 0)
   hook = null
   flicked = null
   for (const piece of pieces) {
@@ -825,7 +860,7 @@ function endTurn() {
     phase = 'over'
   } else {
     turn = other
-    phase = 'aiming'
+    startDodge()
   }
 
   resetLiftSlider()
@@ -878,8 +913,10 @@ function resetGame() {
     piece.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
     piece.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
   }
+  moveHead('red', 0)
+  moveHead('blue', 0)
   turn = 'red'
-  phase = 'aiming'
+  startDodge()
   winner = null
   hasFlicked.red = false
   hasFlicked.blue = false
@@ -904,6 +941,8 @@ window.addEventListener('keydown', (event) => {
 })
 
 showStatus()
+
+startDodge()
 
 // 4e. Everything built so far casts and receives shadows
 scene.traverse((object) => {
@@ -1074,7 +1113,7 @@ function fireFlick(piece: Piece) {
   stopAiming()
   flickArm(activeArm)
   play('thwack')
-  applyFlick(piece, shot, getLift(piece.kind), hookDirection)
+  applyFlick(piece, shot, getLift(piece.kind), hookDirection, dodge)
 }
 
 // Phones have no Esc key, so the button is the way back on every device
@@ -1156,9 +1195,11 @@ function applyFlick(
   piece: Piece,
   aim: { x: number; z: number },
   lift: number,
-  hookSide: number
+  hookSide: number,
+  lean: number
 ) {
   flicked = piece
+  moveHead(piece.side === 'red' ? 'blue' : 'red', lean * LEAN)
 
   if (piece.kind === 'queen') {
     startQueen(piece, aim.x * 4, aim.z * 4)
@@ -1287,6 +1328,8 @@ renderer.setAnimationLoop((time) => {
     piece.mesh.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
   }
 
+  updateLean(characters.red, elapsed)
+  updateLean(characters.blue, elapsed)
   updateArms(allArms, elapsed)
   for (const wobble of wobbles) updateWobble(wobble, elapsed)
   updateCrowd(crowd, findFocus(), elapsed)
