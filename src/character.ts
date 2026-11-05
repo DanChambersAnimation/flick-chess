@@ -124,6 +124,9 @@ export function makeCharacter(
   showOnly(leftEye, 0)
   showOnly(rightEye, 0)
 
+  // Only the normal ears show until ear hits are added
+  for (const ear of findParts(head, 'ear_')) ear.visible = ear.name.endsWith('_0')
+
   const teeth = findParts(head, 'item_teeth_')
 
   const items: Item[] = [
@@ -244,7 +247,8 @@ function bruiseNose(person: Character) {
 function blackenEye(person: Character, side: number) {
   if (person.marked) return
   person.marked = true
-  showOnly(side >= 0 ? person.leftEye : person.rightEye, 1)
+  const eye = side >= 0 ? person.leftEye : person.rightEye
+  eye[1].visible = true
 }
 
 type Point = { x: number; y: number; z: number }
